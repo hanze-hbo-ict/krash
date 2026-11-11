@@ -206,18 +206,18 @@ export async function seedDatabase(
 ): Promise<void> {
   const outcome = await executeScript(db, seedSql, { maxRows: 0, maxResults: 0, maxNotices: 0 })
   if (outcome.error) {
-    throw new SeedError(`The exam dataset could not be loaded: ${outcome.error.message}`)
+    throw new SeedError(`The dataset could not be loaded: ${outcome.error.message}`)
   }
   if (outcome.txStatus !== 'I') {
     await db.exec('rollback')
-    throw new SeedError('The exam dataset script left a transaction open.')
+    throw new SeedError('The dataset script left a transaction open.')
   }
   if (expectedTables.length > 0) {
     const res = await db.query<{ t: string }>(`select t from unnest($1::text[]) as t where to_regclass(t) is null`, [
       expectedTables,
     ])
     if (res.rows.length > 0) {
-      throw new SeedError(`The exam dataset is missing expected tables: ${res.rows.map((r) => r.t).join(', ')}`)
+      throw new SeedError(`The dataset is missing expected tables: ${res.rows.map((r) => r.t).join(', ')}`)
     }
   }
   await db.exec(

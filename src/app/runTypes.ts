@@ -11,7 +11,6 @@ export interface ErrorLocation {
 
 export interface RunRecord {
   id: number
-  kind: 'query' | 'preview'
   docId: string
   docName: string
   isSelection: boolean

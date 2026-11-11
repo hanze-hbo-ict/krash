@@ -23,10 +23,10 @@ export function uniqueName(raw: string, taken: Iterable<string>, fallback = 'Ans
   }
 }
 
-/** Next "Question N" style name. */
-export function nextQuestionName(taken: Iterable<string>): string {
+/** Next free "Query N" name. */
+export function nextTabName(taken: Iterable<string>): string {
   const names = new Set([...taken].map((t) => t.toLowerCase()))
-  for (let i = 1; ; i++) if (!names.has(`question ${i}`)) return `Question ${i}`
+  for (let i = 1; ; i++) if (!names.has(`query ${i}`)) return `Query ${i}`
 }
 
 /** Safe download filename: ASCII letters, digits, dot, dash, underscore. */

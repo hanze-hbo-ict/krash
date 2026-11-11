@@ -8,7 +8,6 @@ import {
   executeScript,
   hasUserRelations,
   introspectSchema,
-  quoteIdent,
   readDatasetMarker,
   SeedError,
   seedDatabase,
@@ -181,13 +180,6 @@ async function handle(req: DbRequest): Promise<unknown> {
     case 'execute': {
       const instance = requireDb()
       return executeScript(instance, req.sql, { maxRows: req.maxRows })
-    }
-    case 'previewTable': {
-      const instance = requireDb()
-      const limit = Math.max(1, Math.min(100, Math.floor(req.limit)))
-      return executeScript(instance, `select * from ${quoteIdent(req.schema)}.${quoteIdent(req.table)} limit ${limit}`, {
-        maxRows: limit,
-      })
     }
     case 'getSchema': {
       // Inside an aborted transaction block this fails; the UI keeps the previous tree.

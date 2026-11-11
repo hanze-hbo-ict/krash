@@ -1,7 +1,5 @@
--- Krash practice dataset "webshop", version 1.
--- Deterministic: every student gets exactly the same rows.
--- NOTE: everything shipped to the browser is visible to students. Do not put
--- model answers or hidden assessment material in this file.
+-- Test fixture: a realistic, deterministic "webshop" database used by the
+-- integration tests to exercise joins, grouping, windows, views and keys.
 
 create table categories (
     id          integer primary key,

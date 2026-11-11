@@ -123,7 +123,6 @@ export type DbRequest =
   | { type: 'init'; dbName: string | null; dataset: DatasetSpec }
   | { type: 'execute'; sql: string; maxRows: number }
   | { type: 'getSchema' }
-  | { type: 'previewTable'; schema: string; table: string; limit: number }
   | { type: 'createFresh'; dbName: string | null; dataset: DatasetSpec }
   | { type: 'dropDatabase'; dbName: string }
   | { type: 'close' }
@@ -135,7 +134,6 @@ export interface DbResponseMap {
   init: DbInfo
   execute: ExecuteOutcome
   getSchema: SchemaNamespace[]
-  previewTable: ExecuteOutcome
   createFresh: DbInfo
   dropDatabase: { dropped: boolean }
   close: { closed: true }

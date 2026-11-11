@@ -36,7 +36,7 @@ export function describeOutcome(run: RunRecord, o: ExecuteOutcome): MessageLine[
   out.push({
     level: 'info',
     label: 'Run',
-    text: `${run.kind === 'preview' ? 'Sample rows' : where} at ${new Date(run.startedAt).toLocaleTimeString('en-GB')}, ${o.durationMs} ms.`,
+    text: `${where} at ${new Date(run.startedAt).toLocaleTimeString('en-GB')}, ${o.durationMs} ms.`,
   })
   if (o.statementCount === 0 && !o.error) out.push({ level: 'info', label: 'Empty', text: 'There was no SQL statement to run.' })
   for (const r of o.results) out.push({ level: 'ok', label: `#${r.index}`, text: describeStatement(r) })

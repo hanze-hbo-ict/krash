@@ -1,6 +1,6 @@
 // Phase A spike: PGlite in a dedicated worker with per-session IndexedDB.
 import { DbClient } from '../src/db/dbClient'
-import seedSql from '../src/exam/seed.sql?raw'
+import { DEFAULT_DATASET } from '../src/db/defaultDataset'
 
 const log = document.getElementById('log')!
 const client = new DbClient()
@@ -11,7 +11,7 @@ if (!session) {
   sessionStorage.setItem('spike-session', session)
 }
 const dbName = params.get('memory') ? null : `krash-${session}-1`
-const dataset = { id: 'webshop-v1', sql: seedSql, expectedTables: ['customers'] }
+const dataset = DEFAULT_DATASET
 
 declare global {
   interface Window {

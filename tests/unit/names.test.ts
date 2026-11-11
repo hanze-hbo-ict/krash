@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_NAME_LENGTH, nextQuestionName, safeFileName, sanitizeName, uniqueName } from '../../src/workspace/names'
+import { MAX_NAME_LENGTH, nextTabName, safeFileName, sanitizeName, uniqueName } from '../../src/workspace/names'
 
 describe('names', () => {
   it('removes control and bidi characters and collapses whitespace', () => {
@@ -12,8 +12,8 @@ describe('names', () => {
     expect(uniqueName('Question 1', ['question 1'])).toBe('Question 1 (2)')
     expect(uniqueName('   ', [], 'Answer')).toBe('Answer')
   })
-  it('suggests the next question number', () => {
-    expect(nextQuestionName(['Question 1', 'Question 3'])).toBe('Question 2')
+  it('suggests the next tab number', () => {
+    expect(nextTabName(['Query 1', 'Query 3'])).toBe('Query 2')
   })
   it('produces safe file names', () => {
     expect(safeFileName('../Zoë: exam/1?')).toBe('Zoe-exam-1')

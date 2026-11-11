@@ -11,10 +11,10 @@ type Outcome = { error: { message: string; position?: string } | null; results: 
 test('PGlite boots, seeds, executes and persists across reload in the same tab', async ({ page, context }) => {
   await page.goto('/spike/index.html')
   const info = await page.evaluate(() => window.spike.ready)
-  expect(info).toMatchObject({ seeded: true, datasetId: 'webshop-v1', persistent: true })
+  expect(info).toMatchObject({ seeded: true, datasetId: 'default-v1', persistent: true })
 
   const run = (sql: string) => page.evaluate((s) => window.spike.run(s), sql) as Promise<Outcome>
-  let out = await run(`create table t (id int primary key, v text); insert into t values (1, null), (2, 'x'); select * from t order by id; select c.first_name, count(o.id) from customers c join orders o on o.customer_id = c.id group by 1 order by 2 desc, 1 limit 1;`)
+  let out = await run(`create table t (id int primary key, v text); insert into t values (1, null), (2, 'x'); select * from t order by id; select name from people order by id limit 1;`)
   expect(out.error).toBeNull()
   expect(out.results[2]!.rows).toEqual([['1', null], ['2', 'x']])
   out = await run('selec 1')
@@ -22,7 +22,7 @@ test('PGlite boots, seeds, executes and persists across reload in the same tab',
 
   await page.reload()
   const info2 = await page.evaluate(() => window.spike.ready)
-  expect(info2).toMatchObject({ seeded: false, datasetId: 'webshop-v1' })
+  expect(info2).toMatchObject({ seeded: false, datasetId: 'default-v1' })
   out = await run('select count(*) from t')
   expect(out.results[0]!.rows).toEqual([['2']])
 
@@ -47,7 +47,7 @@ test('the worker can be terminated mid-query and the database reopened', async (
     return new Promise<string>((resolve) => setTimeout(() => { window.spike.client.stop(); p.then(resolve) }, 1500))
   })
   expect(started).toBe('rejected:cancelled')
-  const info = await page.evaluate(() => window.spike.client.request({ type: 'init', dbName: window.spike.dbName, dataset: { id: 'webshop-v1', sql: '', expectedTables: [] } }))
+  const info = await page.evaluate(() => window.spike.client.request({ type: 'init', dbName: window.spike.dbName, dataset: { id: 'default-v1', sql: '', expectedTables: [] } }))
   expect(info).toMatchObject({ seeded: false })
   const out = (await page.evaluate(() => window.spike.run('select v from keep'))) as Outcome
   expect(out.results[0]!.rows).toEqual([['committed']])

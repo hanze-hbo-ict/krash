@@ -10,7 +10,7 @@ import {
   seedDatabase,
 } from '../../src/db/engine'
 
-const seedSql = readFileSync(new URL('../../src/exam/seed.sql', import.meta.url), 'utf8')
+const seedSql = readFileSync(new URL('../fixtures/webshop.sql', import.meta.url), 'utf8')
 const expected = ['categories', 'products', 'customers', 'employees', 'orders', 'order_lines', 'reviews']
 
 let db: PGlite

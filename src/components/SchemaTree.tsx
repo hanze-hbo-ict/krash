@@ -9,7 +9,6 @@ import type { SchemaNamespace, SchemaRelation } from '../db/protocol'
 interface Props {
   schema: SchemaNamespace[] | null
   stale: boolean
-  onPreview?: (schema: string, table: string) => void
 }
 
 const KIND_LABEL: Record<SchemaRelation['kind'], string> = {
@@ -20,7 +19,7 @@ const KIND_LABEL: Record<SchemaRelation['kind'], string> = {
   'foreign table': 'foreign',
 }
 
-export function SchemaTree({ schema, stale, onPreview }: Props) {
+export function SchemaTree({ schema, stale }: Props) {
   // Expanded state survives schema refreshes; schemas start open, tables closed.
   const [open, setOpen] = useState<Record<string, boolean>>({})
   const isOpen = (key: string, dflt: boolean) => open[key] ?? dflt
@@ -81,11 +80,6 @@ export function SchemaTree({ schema, stale, onPreview }: Props) {
                             </li>
                           ))}
                         </ul>
-                        {onPreview && rel.kind !== 'foreign table' && (
-                          <button type="button" className="link-button preview-button" onClick={() => onPreview(ns.name, rel.name)}>
-                            Show sample rows
-                          </button>
-                        )}
                       </details>
                     </li>
                   )
