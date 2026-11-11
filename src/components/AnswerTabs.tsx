@@ -67,7 +67,7 @@ export function AnswerTabs({ docs, activeId, onSelect, onAdd, onRename, onReques
 
   return (
     <div className="answer-tabs">
-      <div className="tab-strip" role="tablist" aria-label="Answers">
+      <div className="tab-strip" role="tablist" aria-label="Queries">
         {docs.map((doc, i) =>
           renaming === doc.id ? (
             <form
@@ -122,15 +122,15 @@ export function AnswerTabs({ docs, activeId, onSelect, onAdd, onRename, onReques
           ),
         )}
       </div>
-      <div className="tab-actions" role="group" aria-label="Answer tabs">
-        <button type="button" className="icon-button" onClick={onAdd} aria-label="New answer tab" data-tooltip="New answer">
+      <div className="tab-actions" role="group" aria-label="Query tabs">
+        <button type="button" className="icon-button" onClick={onAdd} aria-label="New query tab" data-tooltip="New tab">
           <Icon name="plus" />
         </button>
         <button
           type="button"
           className="icon-button"
           onClick={() => startRename(activeId)}
-          aria-label="Rename current answer (F2)"
+          aria-label="Rename current tab (F2)"
           data-tooltip="Rename (F2)"
         >
           <Icon name="pencil" />
@@ -139,8 +139,8 @@ export function AnswerTabs({ docs, activeId, onSelect, onAdd, onRename, onReques
           type="button"
           className="icon-button"
           onClick={() => onRequestDelete(activeId)}
-          aria-label="Delete current answer"
-          data-tooltip="Delete answer"
+          aria-label="Delete current tab"
+          data-tooltip="Delete tab"
           data-tooltip-pos="end"
         >
           <Icon name="trash" />

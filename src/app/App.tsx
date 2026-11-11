@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { examConfig } from '../exam/examConfig'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { DEFAULT_DATASET } from '../db/defaultDataset'
+import { DEFAULT_LIMITS } from '../db/wire'
 import { DbClient, DbFailure } from '../db/dbClient'
 import type { DbInfo, SchemaNamespace, TxStatus, WorkerFailure } from '../db/protocol'
 import { dbNameFor, dbNameFromIdb } from '../db/storageNames'
 import { offsetToLineCol, pgPositionToOffset } from '../db/sqlLexer'
-import type { AnswerDoc, ThemeChoice, Workspace } from '../workspace/types'
+import type { ThemeChoice, Workspace } from '../workspace/types'
 import {
   createWorkspace,
   findOrphans,
@@ -21,14 +22,14 @@ import {
 } from '../workspace/sessionStore'
 import { acquireSessionLock } from '../workspace/sessionLock'
 import { randomId } from '../workspace/ids'
-import { nextQuestionName, safeFileName, sanitizeName, uniqueName } from '../workspace/names'
-import { exportAnswers, type ImportResult } from '../workspace/exportAnswers'
+import { nextTabName, sanitizeName, uniqueName } from '../workspace/names'
+import { bundledBase, clearBase, importedBase, loadBase, saveBase, type BaseDataset } from '../workspace/baseDataset'
 import { SqlEditor, type SqlEditorHandle } from '../components/SqlEditor'
 import { AnswerTabs } from '../components/AnswerTabs'
 import { SchemaTree } from '../components/SchemaTree'
 import { ResultsPanel } from '../components/ResultsPanel'
 import { Splitter } from '../components/Splitter'
-import { ConfirmDialog, ExportDialog, HelpDialog, ImportDialog, WorkspaceDialog, type ConfirmRequest } from '../components/Dialogs'
+import { ConfirmDialog, ImportDatabaseDialog, type ConfirmRequest } from '../components/Dialogs'
 import { Icon, ThemeIcon } from '../components/Icon'
 import type { ErrorLocation, RunRecord } from './runTypes'
 import { txText } from './describe'
@@ -41,7 +42,8 @@ interface Banner {
   text: string
 }
 
-const dataset = examConfig.dataset
+const BUNDLED = bundledBase(DEFAULT_DATASET)
+const INITIAL_TABS = ['Query 1']
 const THEME_KEY = 'krash:theme'
 
 function readTheme(): ThemeChoice {
@@ -76,8 +78,10 @@ export function App() {
   const [banners, setBanners] = useState<Banner[]>([])
   const [announce, setAnnounce] = useState('')
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
-  const [dialog, setDialog] = useState<null | 'export' | 'import' | 'help' | 'workspace'>(null)
+  const [importOpen, setImportOpen] = useState(false)
   const [theme, setTheme] = useState<ThemeChoice>(readTheme)
+  const [base, setBase] = useState<BaseDataset>(BUNDLED)
+  const [sessionMissing, setSessionMissing] = useState(false)
 
   const client = useRef<DbClient | null>(null)
   const saver = useRef<WorkspaceSaver | null>(null)
@@ -86,10 +90,12 @@ export function App() {
   const mainCol = useRef<HTMLDivElement>(null)
   const runCounter = useRef(0)
   const activeRun = useRef<number | null>(null)
-  const unexported = useRef(false)
   const local = useRef<Storage | null>(null)
+  const session = useRef<Storage | null>(null)
+  const baseRef = useRef<BaseDataset>(BUNDLED)
 
   wsRef.current = ws
+  baseRef.current = base
 
   const addBanner = useCallback((level: Banner['level'], text: string, id = randomId(6)) => {
     setBanners((b) => [...b.filter((x) => x.id !== id), { id, level, text }])
@@ -122,7 +128,7 @@ export function App() {
   // ---- Database lifecycle ---------------------------------------------------------
   const refreshSchema = useCallback(async () => {
     const c = client.current
-    if (!c || !examConfig.features.schemaBrowser) return
+    if (!c) return
     setSchemaStale(true)
     try {
       setSchema(await c.request({ type: 'getSchema' }))
@@ -142,15 +148,15 @@ export function App() {
       if (i.datasetMismatch !== null) {
         addBanner(
           'warn',
-          `This tab’s database was made for a different dataset (“${i.datasetMismatch}”). Use Reset database to load “${dataset.id}”. Your answers are not affected.`,
+          `This tab’s database was made for a different dataset (“${i.datasetMismatch}”). Use Reset to load “${baseRef.current.name}”. Your queries are not affected.`,
           'mismatch',
         )
       }
       if (context === 'boot' && !i.seeded && i.datasetMismatch === null) {
-        addBanner('info', 'Welcome back: your answers and your database were restored from this tab.', 'restored')
+        addBanner('info', 'Welcome back: your queries and your database were restored from this tab.', 'restored')
       }
       if (context === 'restart' && i.seeded) {
-        addBanner('warn', 'The database storage was missing, so the original exam dataset was loaded again.', 'reseeded')
+        addBanner('warn', 'The database storage was missing, so the base dataset was loaded again.', 'reseeded')
       }
     },
     [addBanner],
@@ -161,7 +167,7 @@ export function App() {
       const c = client.current!
       setPhase(context === 'boot' ? 'starting' : 'restarting')
       try {
-        const i = await c.request({ type: 'init', dbName, dataset })
+        const i = await c.request({ type: 'init', dbName, dataset: baseRef.current })
         handleInfo(i, context)
         setPhase('ready')
         await refreshSchema()
@@ -199,12 +205,17 @@ export function App() {
   // ---- Boot ----------------------------------------------------------------------
   useEffect(() => {
     let disposed = false
-    const session = safeStorage('session')
+    const store = safeStorage('session')
+    session.current = store
     local.current = safeStorage('local')
     const idbAvailable = typeof indexedDB !== 'undefined'
-    const persistentPossible = !!session && idbAvailable
+    const persistentPossible = !!store && idbAvailable
+    const startBase = loadBase(store, BUNDLED)
+    baseRef.current = startBase
+    setBase(startBase)
+    setSessionMissing(!store)
 
-    saver.current = new WorkspaceSaver(session, (s, e) => {
+    saver.current = new WorkspaceSaver(store, (s, e) => {
       setSaveState(s)
       setSaveError(e ?? '')
     })
@@ -223,9 +234,9 @@ export function App() {
     }
 
     ;(async () => {
-      let w = loadWorkspace(session)
+      let w = loadWorkspace(store)
       const restored = !!w
-      if (!w) w = createWorkspace(examConfig.initialTabs, persistentPossible)
+      if (!w) w = createWorkspace(INITIAL_TABS, persistentPossible)
       if (w.dbName && !idbAvailable) w = { ...w, dbName: null }
 
       // A duplicated tab carries a copy of this session: give it its own database.
@@ -237,16 +248,14 @@ export function App() {
           await acquireSessionLock(sessionId, 100)
           addBanner(
             'warn',
-            'This looks like a duplicated tab. Your answers were copied, but this tab has its own fresh database. The two tabs no longer share anything.',
+            'This looks like a duplicated tab. Your queries were copied, but this tab has its own fresh database. The two tabs no longer share anything.',
             'duplicate',
           )
         }
       }
       if (disposed) return
-      if (!session) {
-        addBanner('error', 'Session storage is unavailable: answers will be lost on reload. Export often.', 'nostorage')
-      } else if (!w.dbName) {
-        addBanner('warn', 'Browser database storage is unavailable: database changes will not survive a reload. Answers are still saved.', 'memdb')
+      if (store && !w.dbName) {
+        addBanner('warn', 'Browser database storage is unavailable: database changes will not survive a reload. Queries are still saved.', 'memdb')
       }
       writeHeartbeat(local.current, w.sessionId)
       setWs(w)
@@ -285,11 +294,11 @@ export function App() {
     return () => clearTimeout(t)
   }, [phase, addBanner])
 
-  // Warn before closing the tab with answers that were not exported.
+  // Answers live only in this tab: warn before closing it while there is SQL in it.
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
       saver.current?.flush()
-      if (unexported.current) {
+      if (wsRef.current?.docs.some((d) => d.sql.trim() !== '')) {
         e.preventDefault()
         e.returnValue = ''
       }
@@ -316,7 +325,6 @@ export function App() {
 
   const onEdit = useCallback(
     (docId: string, text: string) => {
-      unexported.current = true
       updateWs((w) => ({ ...w, docs: w.docs.map((d) => (d.id === docId ? { ...d, sql: text } : d)) }))
     },
     [updateWs],
@@ -327,10 +335,10 @@ export function App() {
   const addDoc = () => {
     updateWs((w) => {
       if (w.docs.length >= 50) {
-        addBanner('warn', 'You have reached the maximum of 50 answer tabs.', 'maxdocs')
+        addBanner('warn', 'You have reached the maximum of 50 query tabs.', 'maxdocs')
         return w
       }
-      const d = newDoc(nextQuestionName(w.docs.map((x) => x.name)))
+      const d = newDoc(nextTabName(w.docs.map((x) => x.name)))
       return { ...w, docs: [...w.docs, d], activeId: d.id }
     })
     setTimeout(() => editor.current?.focus(), 0)
@@ -344,25 +352,24 @@ export function App() {
       const unique = uniqueName(name, others)
       return { ...w, docs: w.docs.map((d) => (d.id === id ? { ...d, name: unique } : d)) }
     })
-    unexported.current = true
   }
 
   const requestDelete = (id: string) => {
     const doc = wsRef.current?.docs.find((d) => d.id === id)
     if (!doc) return
     setConfirm({
-      title: 'Delete answer?',
+      title: 'Delete query tab?',
       body: (
         <p>
           Delete “{doc.name}”{doc.sql.trim() ? ' and its SQL' : ''}? This cannot be undone. The database is not changed.
         </p>
       ),
-      confirmLabel: 'Delete answer',
+      confirmLabel: 'Delete tab',
       danger: true,
       onConfirm: () => {
         updateWs((w) => {
           let rest = w.docs.filter((d) => d.id !== id)
-          if (rest.length === 0) rest = [newDoc(nextQuestionName([]))]
+          if (rest.length === 0) rest = [newDoc(nextTabName([]))]
           const idx = w.docs.findIndex((d) => d.id === id)
           const activeId = w.activeId === id ? rest[Math.min(idx, rest.length - 1)]!.id : w.activeId
           return { ...w, docs: rest, activeId }
@@ -371,7 +378,6 @@ export function App() {
           const { [id]: _removed, ...rest } = r
           return rest
         })
-        unexported.current = true
         setAnnounce(`Deleted ${doc.name}.`)
       },
     })
@@ -391,7 +397,6 @@ export function App() {
     const toLine = offsetToLineCol(target.docText, target.offset + target.sql.length).line
     const record: RunRecord = {
       id,
-      kind: 'query',
       docId: doc.id,
       docName: doc.name,
       isSelection: target.isSelection,
@@ -407,7 +412,7 @@ export function App() {
     setAnnounce('Running…')
     dropBanner('restart')
     try {
-      const outcome = await c.request({ type: 'execute', sql: target.sql, maxRows: examConfig.maxRows })
+      const outcome = await c.request({ type: 'execute', sql: target.sql, maxRows: DEFAULT_LIMITS.maxRows })
       if (activeRun.current !== id) return
       const errorLocation = outcome.error ? errorLocationFor(target.sql, target.offset, target.docText, outcome.error.position) : null
       setRuns((r) => ({ ...r, [doc.id]: { ...record, status: 'done', outcome, errorLocation } }))
@@ -437,39 +442,6 @@ export function App() {
     void restartAfterLoss('stopped')
   }
 
-  const preview = async (schemaName: string, table: string) => {
-    const c = client.current
-    const w = wsRef.current
-    if (!c || !w || phase !== 'ready') return
-    const id = ++runCounter.current
-    activeRun.current = id
-    const base: RunRecord = {
-      id,
-      kind: 'preview',
-      docId: w.activeId,
-      docName: `${schemaName}.${table}`,
-      isSelection: false,
-      lines: { from: 1, to: 1 },
-      startedAt: Date.now(),
-      status: 'running',
-      outcome: null,
-      failure: null,
-      errorLocation: null,
-    }
-    setPhase('running')
-    try {
-      const outcome = await c.request({ type: 'previewTable', schema: schemaName, table, limit: 20 })
-      if (activeRun.current === id) setRuns((r) => ({ ...r, [w.activeId]: { ...base, status: 'done', outcome } }))
-      setPhase('ready')
-    } catch (err) {
-      const f = err instanceof DbFailure ? err.failure : { kind: 'internal' as const, message: String(err) }
-      if (activeRun.current === id) setRuns((r) => ({ ...r, [w.activeId]: { ...base, status: 'done', failure: f } }))
-      if (f.kind !== 'crash' && f.kind !== 'cancelled') setPhase('ready')
-    } finally {
-      if (activeRun.current === id) activeRun.current = null
-    }
-  }
-
   // Ctrl/Cmd+Enter outside the editor (e.g. on a tab or in results).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -482,36 +454,48 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey)
   }, [run])
 
-  // ---- Reset / clear -----------------------------------------------------------------
-  const doResetDb = async () => {
+  // ---- Reset / import / clear ----------------------------------------------------------
+  /**
+   * Build a fresh database from `next` in a new generation and swap to it only
+   * when it loaded completely; otherwise the previous database stays in use.
+   */
+  const rebuildDb = async (next: BaseDataset, mode: 'reset' | 'import') => {
     const c = client.current
     const w = wsRef.current
     if (!c || !w) return
-    setDialog(null)
     setPhase('resetting')
-    setAnnounce('Resetting the database…')
+    setAnnounce(mode === 'reset' ? 'Resetting the database…' : 'Importing the database…')
     const generation = w.generation + 1
     const newName = w.dbName ? dbNameFor(w.sessionId, generation) : null
     const oldName = w.dbName
     try {
-      const i = await c.request({ type: 'createFresh', dbName: newName, dataset })
-      const next = { ...w, dbName: newName, generation }
-      setWs(next)
-      saver.current?.schedule(next)
+      const i = await c.request({ type: 'createFresh', dbName: newName, dataset: next })
+      const nextWs = { ...w, dbName: newName, generation }
+      setWs(nextWs)
+      saver.current?.schedule(nextWs)
       saver.current?.flush()
+      baseRef.current = next
+      setBase(next)
+      const stored = saveBase(session.current, next)
       handleInfo(i, 'reset')
       setPhase('ready')
       setRuns({})
       dropBanner('restart')
-      addBanner('info', 'The database was reset to the original exam dataset. Your answers were kept.', 'reset')
-      setAnnounce('The database was reset.')
+      dropBanner('reset')
+      if (mode === 'reset') {
+        addBanner('info', `The database was reset to “${next.name}”. Your queries were kept.`, 'reset')
+      } else {
+        addBanner('info', `The database was cleared and the script was imported. Your queries were kept.`, 'reset')
+        if (!stored) addBanner('warn', 'The imported script could not be kept in this tab: after a reload, Reset returns to the default database.', 'basestore')
+      }
+      setAnnounce(mode === 'reset' ? 'The database was reset.' : 'The database was imported.')
       await refreshSchema()
       if (oldName) await c.request({ type: 'dropDatabase', dbName: oldName }).catch(() => {})
     } catch (err) {
       const f = err instanceof DbFailure ? err.failure : { kind: 'internal' as const, message: String(err) }
       if (f.kind === 'crash') return // the crash handler restarts the previous database
       setPhase(info ? 'ready' : 'failed')
-      addBanner('error', `Reset failed: ${f.message} Your previous database is still in use.`, 'reset')
+      addBanner('error', `${mode === 'reset' ? 'Reset' : 'Import'} failed: ${f.message} Your previous database is still in use.`, 'reset')
     }
   }
 
@@ -520,47 +504,26 @@ export function App() {
       title: 'Reset database?',
       body: (
         <p>
-          This removes every change you made to the database (tables, rows, views…) and restores the original exam dataset “{dataset.id}”. Your answer tabs
-          and their SQL are kept.
+          This removes every change you made to the database (tables, rows, views…) and restores “{base.name}”. Your answer tabs and their SQL are kept.
         </p>
       ),
       confirmLabel: 'Reset database',
       danger: true,
-      onConfirm: () => void doResetDb(),
+      onConfirm: () => void rebuildDb(baseRef.current, 'reset'),
     })
 
-  const askClearAnswers = () =>
-    setConfirm({
-      title: 'Clear all answers?',
-      body: (
-        <p>
-          This deletes all {wsRef.current?.docs.length ?? 0} answer tabs and their SQL. It cannot be undone; export first if you want to keep them. The database
-          is not changed.
-        </p>
-      ),
-      confirmLabel: 'Clear answers',
-      danger: true,
-      onConfirm: () => {
-        setDialog(null)
-        updateWs((w) => {
-          const fresh = createWorkspace(examConfig.initialTabs, false)
-          return { ...w, docs: fresh.docs, activeId: fresh.activeId }
-        })
-        setRuns({})
-        unexported.current = false
-        setAnnounce('All answers were cleared.')
-      },
-    })
+  const importDb = (sql: string) => {
+    setImportOpen(false)
+    void rebuildDb(importedBase(sql), 'import')
+  }
 
-  const askStartFresh = () =>
+  const askClearWorkspace = () =>
     setConfirm({
       title: 'Clear this workspace?',
       body: (
         <>
-          <p>This deletes all answers and this tab’s database from the browser, then starts an empty workspace with the original dataset.</p>
-          <p>
-            <strong>Export your answers first</strong> if you still need them. This cannot be undone.
-          </p>
+          <p>This deletes all queries and this tab’s database from the browser, then starts an empty workspace with the default database.</p>
+          <p>This cannot be undone.</p>
         </>
       ),
       confirmLabel: 'Clear workspace',
@@ -569,9 +532,7 @@ export function App() {
         const c = client.current
         const w = wsRef.current
         if (!c || !w) return
-        setDialog(null)
         setPhase('resetting')
-        unexported.current = false
         try {
           await c.request({ type: 'close' })
           if (w.dbName) await c.request({ type: 'dropDatabase', dbName: w.dbName })
@@ -579,74 +540,16 @@ export function App() {
           /* fall through: a stale database is removed by orphan cleanup later */
         }
         saver.current?.clear()
+        clearBase(session.current)
         removeHeartbeat(local.current, w.sessionId)
         window.location.reload()
       },
     })
 
-  // ---- Import / export ------------------------------------------------------------------
-  const exportFileName = useMemo(() => {
-    const d = new Date()
-    const pad = (n: number) => String(n).padStart(2, '0')
-    const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`
-    return `${safeFileName(`krash-answers-${examConfig.examId}-${stamp}`)}.sql`
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dialog])
-
-  const buildExport = () =>
-    exportAnswers(wsRef.current?.docs ?? [], { examId: examConfig.examId, datasetId: dataset.id, exportedAt: new Date() })
-
-  const download = () => {
-    const blob = new Blob([buildExport()], { type: 'application/sql;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = exportFileName
-    a.rel = 'noopener'
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    setTimeout(() => URL.revokeObjectURL(url), 10_000)
-    unexported.current = false
-    updateWs((w) => ({ ...w, lastExportAt: new Date().toISOString() }))
-    setAnnounce(`Downloaded ${exportFileName}. This is not a submission.`)
-  }
-
-  const doImport = (result: ImportResult, mode: 'replace' | 'add') => {
-    const apply = () => {
-      updateWs((w) => {
-        const base = mode === 'replace' ? [] : w.docs
-        const taken = base.map((d) => d.name)
-        const added: AnswerDoc[] = result.answers.slice(0, Math.max(0, 50 - base.length)).map((a) => {
-          const name = uniqueName(a.name, taken, 'Answer')
-          taken.push(name)
-          return newDoc(name, a.sql)
-        })
-        const docs = [...base, ...added]
-        if (docs.length === 0) return w
-        return { ...w, docs, activeId: added[0]?.id ?? w.activeId }
-      })
-      if (mode === 'replace') setRuns({})
-      unexported.current = true
-      setDialog(null)
-      setAnnounce(`Imported ${result.answers.length} answers. Nothing was run.`)
-      addBanner('info', `Imported ${result.answers.length} answer${result.answers.length === 1 ? '' : 's'}. Nothing was run.`, 'import')
-    }
-    if (mode === 'replace') {
-      setConfirm({
-        title: 'Replace all answers?',
-        body: <p>Your current {wsRef.current?.docs.length ?? 0} answer tabs will be replaced by the imported answers. The database is not changed.</p>,
-        confirmLabel: 'Replace answers',
-        danger: true,
-        onConfirm: apply,
-      })
-    } else apply()
-  }
-
   // ---- Render ---------------------------------------------------------------------------
   const goToError = (offset: number) => editor.current?.moveTo(offset)
   const ui = ws?.ui
-  const collapsed = !!ui?.sidebarCollapsed || !examConfig.features.schemaBrowser
+  const collapsed = !!ui?.sidebarCollapsed
   const run_ = activeDoc ? runs[activeDoc.id] ?? null : null
 
   const status = (() => {
@@ -675,8 +578,8 @@ export function App() {
       : saveState === 'saved'
         ? 'Saved in this tab'
         : saveState === 'failed'
-          ? 'Save failed: export now'
-          : 'Not saved: export often'
+          ? 'Save failed'
+          : 'Not saved'
 
   const cycleTheme = () => setTheme((t) => (t === 'system' ? 'light' : t === 'light' ? 'dark' : 'system'))
   const themeLabel = { system: 'System appearance', light: 'Light appearance', dark: 'Dark appearance' }[theme]
@@ -697,47 +600,24 @@ export function App() {
             <p>A little room for PostgreSQL.</p>
           </div>
         </div>
-        <nav className="header-actions" aria-label="Workspace">
-          {examConfig.features.answerImport && (
-            <button type="button" onClick={() => setDialog('import')}>
-              <Icon name="download" /> <span>Import</span>
-            </button>
-          )}
-          {examConfig.features.answerExport && (
-            <button type="button" className="export-button" onClick={() => setDialog('export')}>
-              <Icon name="upload" /> <span>Export answers</span>
-            </button>
-          )}
-          <button type="button" onClick={() => setDialog('workspace')}>
-            <Icon name="workspace" /> <span>Workspace</span>
-          </button>
-          <button type="button" onClick={() => setDialog('help')}>
-            <Icon name="help" /> <span>Help</span>
-          </button>
-          <button
-            type="button"
-            className="theme-control"
-            onClick={cycleTheme}
-            aria-label={`${themeLabel}. Switch to ${nextThemeLabel} appearance`}
-            title={`${themeLabel}. Switch to ${nextThemeLabel} appearance`}
-          >
-            <ThemeIcon choice={theme} />
-          </button>
-        </nav>
+        <button
+          type="button"
+          className="theme-control"
+          onClick={cycleTheme}
+          aria-label={`${themeLabel}. Switch to ${nextThemeLabel} appearance`}
+          title={`${themeLabel}. Switch to ${nextThemeLabel} appearance`}
+        >
+          <ThemeIcon choice={theme} />
+        </button>
       </header>
 
       <main>
         <div className="workspace-heading">
           <p className="eyebrow">
-            POSTGRESQL WORKSPACE<span className="eyebrow-title"> · {examConfig.title}</span>
+            POSTGRESQL WORKSPACE
           </p>
           <p className={`save-state save-${saveState}`} role="status" title={saveError || undefined}>
             {saveText}
-            {ws?.lastExportAt ? (
-              <span className="export-state"> · exported {new Date(ws.lastExportAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</span>
-            ) : (
-              <span className="export-state"> · not exported yet</span>
-            )}
           </p>
         </div>
 
@@ -783,17 +663,50 @@ export function App() {
               const next = { ...w, dbName: null }
               setWs(next)
               saver.current?.schedule(next)
-              addBanner('warn', 'Using a temporary database: database changes will not survive a reload. Answers are still saved.', 'memdb')
+              addBanner('warn', 'Using a temporary database: database changes will not survive a reload. Queries are still saved.', 'memdb')
               await openDb(null, 'boot')
             }}
           />
         )}
 
         <div className={`workspace${collapsed ? ' sidebar-collapsed' : ''}`}>
-          {examConfig.features.schemaBrowser && (
-            <aside className="panel db-panel" aria-labelledby="db-title">
+          <aside className="panel db-panel" aria-labelledby="db-title">
               <div className="panel-header">
                 <h2 id="db-title">Database</h2>
+                {!collapsed && (
+                  <div className="db-actions" role="group" aria-label="Database">
+                    <button
+                      type="button"
+                      className="icon-button"
+                      onClick={askResetDb}
+                      disabled={phase !== 'ready'}
+                      aria-label="Reset database"
+                      data-tooltip="Reset to the last imported database"
+                    >
+                      <Icon name="reset" />
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-button"
+                      onClick={askClearWorkspace}
+                      disabled={phase === 'resetting'}
+                      aria-label="Clear workspace"
+                      data-tooltip="Clear all and start fresh"
+                    >
+                      <Icon name="trash" />
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-button"
+                      onClick={() => setImportOpen(true)}
+                      disabled={phase !== 'ready'}
+                      aria-label="Import database"
+                      data-tooltip="Import a database"
+                    >
+                      <Icon name="download" />
+                    </button>
+                  </div>
+                )}
                 <button
                   type="button"
                   className="icon-button"
@@ -801,31 +714,28 @@ export function App() {
                   aria-controls="db-panel-body"
                   aria-label={collapsed ? 'Show database panel' : 'Hide database panel'}
                   data-tooltip={collapsed ? 'Show' : 'Hide'}
+                  data-tooltip-pos="end"
                   onClick={() => updateWs((w) => ({ ...w, ui: { ...w.ui, sidebarCollapsed: !w.ui.sidebarCollapsed } }))}
                 >
                   <Icon name="sidebar" />
                 </button>
               </div>
               <div className="db-panel-body" id="db-panel-body" hidden={collapsed}>
-                <SchemaTree schema={schema} stale={schemaStale} onPreview={examConfig.features.tablePreview ? preview : undefined} />
+                <SchemaTree schema={schema} stale={schemaStale} />
                 <div className="db-panel-footer">
                   <p className="db-facts">
                     {info ? (
                       <>
-                        PostgreSQL {info.postgresVersion} · {info.datasetId}
+                        PostgreSQL {info.postgresVersion} · {base.name}
                         {!info.persistent && ' · temporary'}
                       </>
                     ) : (
                       'Starting…'
                     )}
                   </p>
-                  <button type="button" onClick={askResetDb} disabled={phase !== 'ready'}>
-                    <Icon name="reset" /> Reset database
-                  </button>
                 </div>
               </div>
             </aside>
-          )}
 
           <div className="main-col" ref={mainCol} style={{ gridTemplateRows: `minmax(140px, ${ui?.editorFraction ?? 0.55}fr) auto minmax(140px, ${1 - (ui?.editorFraction ?? 0.55)}fr)` }}>
             <section className="panel editor-panel" id="editor-panel" aria-label="SQL editor">
@@ -856,7 +766,7 @@ export function App() {
                       data-action="run"
                       onClick={() => void run()}
                       disabled={phase !== 'ready'}
-                      title="Run the selection, or the whole answer (Ctrl/⌘ + Enter)"
+                      title="Run the selection, or the whole tab (Ctrl/⌘ + Enter)"
                     >
                       <Icon name="play" /> Run
                     </button>
@@ -889,13 +799,16 @@ export function App() {
             <ResultsPanel run={run_} onGoToError={goToError} />
           </div>
         </div>
-        <p className="workspace-motto">A few answers. One database.</p>
+        <p className="workspace-motto">One database. One query at a time.</p>
       </main>
 
       <footer className="app-footer">
-        <span>No code completion or AI assistance.</span>
-        <span>PostgreSQL runs in your browser; answers are kept only in this tab. Export regularly and submit via your exam platform.</span>
-        <a href="./THIRD_PARTY_NOTICES.txt" target="_blank" rel="noopener">
+        <a href="https://github.com/hanze-hbo-ict/krash">Krash on GitHub</a>
+        <span>No code completion or AI assistance. Everything runs in your browser, and your queries are kept only in this tab.</span>
+        <span className="storage-warning" hidden={!sessionMissing}>
+          Session storage is unavailable: your queries will be lost on reload.
+        </span>
+        <a className="footer-licenses" href="./THIRD_PARTY_NOTICES.txt">
           Licenses
         </a>
       </footer>
@@ -908,40 +821,7 @@ export function App() {
       </div>
 
       <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} />
-      <ExportDialog
-        open={dialog === 'export'}
-        onClose={() => setDialog(null)}
-        docs={docs}
-        activeDoc={activeDoc}
-        fileName={exportFileName}
-        buildText={buildExport}
-        onDownload={download}
-        lastExportAt={ws?.lastExportAt ?? null}
-      />
-      <ImportDialog
-        open={dialog === 'import'}
-        onClose={() => setDialog(null)}
-        examId={examConfig.examId}
-        datasetId={dataset.id}
-        onImport={doImport}
-      />
-      <WorkspaceDialog
-        open={dialog === 'workspace' && !confirm}
-        onClose={() => setDialog(null)}
-        onResetDb={askResetDb}
-        onClearAnswers={askClearAnswers}
-        onStartFresh={askStartFresh}
-        dbReady={phase === 'ready'}
-      />
-      <HelpDialog
-        open={dialog === 'help'}
-        onClose={() => setDialog(null)}
-        title={examConfig.title}
-        examId={examConfig.examId}
-        info={info}
-        instructions={examConfig.instructions}
-        persistent={!!ws?.dbName}
-      />
+      <ImportDatabaseDialog open={importOpen} onClose={() => setImportOpen(false)} onImport={importDb} />
     </>
   )
 }
@@ -960,9 +840,9 @@ function FailurePanel({
   onMemory: () => void
 }) {
   const advice: Record<string, string> = {
-    wasm: 'The PostgreSQL engine files could not be loaded. Reload the page. If this keeps happening, this computer may block WebAssembly or the Krash files are incomplete; tell an invigilator.',
+    wasm: 'The PostgreSQL engine files could not be loaded. Reload the page. If this keeps happening, this computer may block WebAssembly or the Krash files are incomplete.',
     storage: 'The browser refused or failed to open the database storage. You can try again, start a new database, or continue with a temporary database.',
-    seed: 'The exam dataset could not be loaded. Try again; if it keeps failing, tell an invigilator.',
+    seed: 'The dataset could not be loaded. Try again.',
     crash: 'The database engine stopped while starting. Try again or start a new database.',
     internal: 'Something went wrong while starting the database.',
   }
@@ -977,7 +857,7 @@ function FailurePanel({
           <pre>{failure.detail}</pre>
         </details>
       )}
-      <p>Your answers are safe and you can keep editing and exporting them.</p>
+      <p>Your queries are safe and you can keep editing them.</p>
       <div className="failure-actions">
         <button type="button" className="primary" onClick={onRetry}>
           Try again

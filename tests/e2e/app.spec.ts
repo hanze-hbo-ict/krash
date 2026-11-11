@@ -3,7 +3,6 @@
  * Runs against the production build (vite preview) in Chromium, Firefox and WebKit.
  */
 import { expect, test, type Page } from '@playwright/test'
-import { readFileSync } from 'node:fs'
 
 const MOD = process.platform === 'darwin' ? 'Meta' : 'Control'
 
@@ -39,13 +38,14 @@ test.describe('Krash', () => {
   test('1–2: fresh workspace shows seeded schema; SELECT and DDL work', async ({ page }) => {
     await open(page)
     const tree = page.locator('.schema-tree')
-    await expect(tree.getByText('customers', { exact: true })).toBeVisible()
-    await expect(page.getByRole('tab', { name: 'Question 1' })).toHaveAttribute('aria-selected', 'true')
+    await expect(tree.getByText('people', { exact: true })).toBeVisible()
+    await expect(page.getByRole('tab')).toHaveCount(1)
+    await expect(page.getByRole('tab', { name: 'Query 1' })).toHaveAttribute('aria-selected', 'true')
     await expect.poll(() => editorText(page)).toBe('')
 
-    await setSql(page, 'select count(*) as n from customers;')
+    await setSql(page, 'select count(*) as n from people;')
     await run(page)
-    await expect(results(page).locator('table td').first()).toHaveText('30')
+    await expect(results(page).locator('table td').first()).toHaveText('3')
     await expect(results(page).locator('th').filter({ hasText: /^n/ })).toBeVisible()
 
     await setSql(page, 'create table answers_t (id int primary key, label text not null);\ninsert into answers_t values (1, \'a\');\nselect * from answers_t where false;')
@@ -81,7 +81,7 @@ test.describe('Krash', () => {
 
   test('4: errors are genuine, located, and keep the SQL intact', async ({ page }) => {
     await open(page)
-    const sql = 'select 1;\nselect *\n  fromm customers;'
+    const sql = 'select 1;\nselect *\n  fromm people;'
     await setSql(page, sql)
     await run(page)
     const alert = results(page).getByRole('alert')
@@ -89,7 +89,7 @@ test.describe('Krash', () => {
     await expect(alert).toContainText('Line 3, column 3')
     await expect(alert).toContainText('SQLSTATE 42601')
     await expect.poll(() => editorText(page)).toBe(sql)
-    await setSql(page, 'select * from customers\nwhere id = 1;')
+    await setSql(page, 'select * from people\nwhere id = 1;')
     await run(page)
     await expect(results(page).getByRole('alert')).toHaveCount(0)
     await expect(results(page).locator('tbody tr')).toHaveCount(1)
@@ -112,24 +112,26 @@ test.describe('Krash', () => {
     await open(page)
     await setSql(page, 'create table shared_t (n int);')
     await run(page)
-    await page.getByRole('tab', { name: 'Question 2' }).click()
+    await page.getByRole('button', { name: 'New query tab' }).click()
+    await expect(page.getByRole('tab', { name: 'Query 2' })).toHaveAttribute('aria-selected', 'true')
     await setSql(page, 'insert into shared_t values (42);')
     await run(page)
-    await page.getByRole('tab', { name: 'Question 3' }).click()
+    await page.getByRole('button', { name: 'New query tab' }).click()
+    await expect(page.getByRole('tab', { name: 'Query 3' })).toHaveAttribute('aria-selected', 'true')
     await setSql(page, 'select n from shared_t;')
     await run(page)
     await expect(results(page).locator('tbody td').first()).toHaveText('42')
 
-    await page.getByRole('tab', { name: 'Question 1' }).click()
+    await page.getByRole('tab', { name: 'Query 1' }).click()
     await expect.poll(() => editorText(page)).toBe('create table shared_t (n int);')
 
     await page.waitForTimeout(600) // debounce
     await page.reload()
     await expect(page.locator('.db-status')).toHaveText('Ready', { timeout: 60_000 })
     await expect(page.getByText('Welcome back')).toBeVisible()
-    await expect(page.getByRole('tab', { name: 'Question 1' })).toHaveAttribute('aria-selected', 'true')
+    await expect(page.getByRole('tab', { name: 'Query 1' })).toHaveAttribute('aria-selected', 'true')
     await expect.poll(() => editorText(page)).toBe('create table shared_t (n int);')
-    await page.getByRole('tab', { name: 'Question 3' }).click()
+    await page.getByRole('tab', { name: 'Query 3' }).click()
     await expect.poll(() => editorText(page)).toBe('select n from shared_t;')
     await run(page)
     await expect(results(page).locator('tbody td').first()).toHaveText('42')
@@ -171,67 +173,59 @@ test.describe('Krash', () => {
 
   test('9: Reset database restores the seed and keeps answers', async ({ page }) => {
     await open(page)
-    await setSql(page, 'delete from order_lines; delete from orders;')
+    await setSql(page, 'delete from people;')
     await run(page)
     await page.getByRole('button', { name: 'Reset database', exact: true }).click()
     await page.getByRole('dialog').getByRole('button', { name: 'Reset database' }).click()
-    await expect(page.getByText('The database was reset to the original exam dataset')).toBeVisible({ timeout: 60_000 })
-    await expect.poll(() => editorText(page)).toBe('delete from order_lines; delete from orders;')
-    await setSql(page, 'select count(*) from orders;')
+    await expect(page.getByText('The database was reset to “default database”')).toBeVisible({ timeout: 60_000 })
+    await expect.poll(() => editorText(page)).toBe('delete from people;')
+    await setSql(page, 'select count(*) from people;')
     await run(page)
-    await expect(results(page).locator('tbody td').first()).toHaveText('240')
+    await expect(results(page).locator('tbody td').first()).toHaveText('3')
   })
 
-  test('10: export, clear answers, import restores names, order and text without running', async ({ page }) => {
+  test('10: importing a script replaces the database; Reset and reload keep the imported base', async ({ page }) => {
     await open(page)
-    const texts = ['select 1;', '-- Q2\nselect \'two\';\n', 'select $$ -- ==== krash:end 1 ==== $$;']
-    const tabs = ['Question 1', 'Question 2', 'Question 3']
-    for (let i = 0; i < 3; i++) {
-      await page.getByRole('tab', { name: tabs[i] }).click()
-      await setSql(page, texts[i]!)
-    }
-    // Rename tab 2 with F2.
-    await page.getByRole('tab', { name: 'Question 2' }).focus()
-    await page.keyboard.press('F2')
-    await page.keyboard.press(`${MOD}+A`)
-    await page.keyboard.insertText('Joins "and" more')
-    await page.keyboard.press('Enter')
-    await expect(page.getByRole('tab', { name: 'Joins "and" more' })).toBeVisible()
-
-    await page.getByRole('button', { name: 'Export answers' }).click()
-    const dialog = page.getByRole('dialog', { name: 'Export answers' })
-    await expect(dialog).toContainText('Downloading is not submitting')
-    const [download] = await Promise.all([page.waitForEvent('download'), dialog.getByRole('button', { name: 'Download .sql' }).click()])
-    expect(download.suggestedFilename()).toMatch(/^krash-answers-dbs-practice-\d{8}-\d{4}\.sql$/)
-    await expect(dialog).toContainText('This is not a submission')
-    const path = await download.path()
-    const exported = readFileSync(path!, 'utf8')
-    expect(exported.startsWith('-- Krash answers\n-- krash-format: 1\n')).toBe(true)
-    await dialog.getByRole('button', { name: 'Close' }).click()
-
-    // Clear answers.
-    await page.getByRole('button', { name: 'Workspace' }).click()
-    await page.getByRole('button', { name: 'Clear answers…' }).click()
-    await page.getByRole('dialog', { name: 'Clear all answers?' }).getByRole('button', { name: 'Clear answers' }).click()
-    await expect(page.getByRole('tab', { name: 'Joins "and" more' })).toHaveCount(0)
-    await page.keyboard.press('Escape')
-
-    // Import.
-    await page.getByRole('button', { name: 'Import' }).click()
-    const imp = page.getByRole('dialog', { name: 'Import answers' })
-    await imp.locator('input[type=file]').setInputFiles(path!)
-    await expect(imp).toContainText('Found 3 answers')
-    await imp.getByRole('button', { name: 'Replace all answers' }).click()
-    await page.getByRole('dialog', { name: 'Replace all answers?' }).getByRole('button', { name: 'Replace answers' }).click()
-
-    const names = await page.getByRole('tablist', { name: 'Answers' }).getByRole('tab').allTextContents()
-    expect(names).toEqual(['Question 1', 'Joins "and" more', 'Question 3'])
-    for (let i = 0; i < 3; i++) {
-      await page.getByRole('tab', { name: names[i] }).click()
-      await expect.poll(() => editorText(page)).toBe(texts[i])
-    }
-    // Nothing was executed.
+    await setSql(page, 'select count(*) from imported_t;')
+    const sql = "create table imported_t (id int primary key, note text);\ninsert into imported_t values (1, 'a;b'), (2, $$c$$);\n"
+    await page.getByRole('button', { name: 'Import database' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Import database' })
+    await dialog.locator('textarea').fill(sql)
+    await dialog.getByRole('button', { name: 'Clear database and import' }).click()
+    await expect(page.getByText('The database was cleared and the script was imported')).toBeVisible({ timeout: 60_000 })
+    const tree = page.locator('.schema-tree')
+    await expect(tree.getByText('imported_t', { exact: true })).toBeVisible()
+    await expect(tree.getByText('people', { exact: true })).toHaveCount(0)
+    // Answers are kept and nothing ran.
+    await expect.poll(() => editorText(page)).toBe('select count(*) from imported_t;')
     await expect(results(page)).toContainText('Results appear here')
+
+    await setSql(page, 'delete from imported_t;')
+    await run(page)
+    await page.getByRole('button', { name: 'Reset database', exact: true }).click()
+    await page.getByRole('dialog').getByRole('button', { name: 'Reset database' }).click()
+    await expect(page.getByText('The database was reset to “imported database”')).toBeVisible({ timeout: 60_000 })
+    await setSql(page, 'select count(*) from imported_t;')
+    await run(page)
+    await expect(results(page).locator('tbody td').first()).toHaveText('2')
+
+    await page.waitForTimeout(600)
+    await page.reload()
+    await expect(page.locator('.db-status')).toHaveText('Ready', { timeout: 60_000 })
+    await expect(page.getByText('different dataset')).toHaveCount(0)
+    await expect(page.locator('.db-facts')).toContainText('imported database')
+    await expect(tree.getByText('imported_t', { exact: true })).toBeVisible()
+  })
+
+  test('10b: a failing import leaves the previous database in use', async ({ page }) => {
+    await open(page)
+    await page.getByRole('button', { name: 'Import database' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Import database' })
+    await dialog.locator('textarea').fill('create table ok_t (x int);\nselect 1/0;')
+    await dialog.getByRole('button', { name: 'Clear database and import' }).click()
+    await expect(page.getByText(/Import failed: .*division by zero.*Your previous database is still in use/)).toBeVisible({ timeout: 60_000 })
+    await expect(page.locator('.schema-tree').getByText('people', { exact: true })).toBeVisible()
+    await expect(page.locator('.schema-tree').getByText('ok_t', { exact: true })).toHaveCount(0)
   })
 
   test('11: huge results are bounded with an explicit notice', async ({ page }) => {
@@ -272,7 +266,7 @@ test.describe('Krash', () => {
 
   test('COPY FROM STDIN is refused without breaking the engine', async ({ page }) => {
     await open(page)
-    await setSql(page, 'copy categories from stdin;')
+    await setSql(page, 'copy people from stdin;')
     await run(page)
     await expect(results(page).getByRole('alert')).toContainText('COPY ... FROM STDIN is not supported')
     await setSql(page, 'select 1 as ok;')
@@ -310,7 +304,7 @@ test.describe('failure states', () => {
     await context.route('**/*.wasm', (route) => route.abort())
     await page.goto('/')
     await expect(page.getByRole('heading', { name: 'The database is not available' })).toBeVisible({ timeout: 60_000 })
-    await expect(page.getByText('Your answers are safe')).toBeVisible()
+    await expect(page.getByText('Your queries are safe')).toBeVisible()
     await setSql(page, 'select 1;')
     await expect.poll(() => editorText(page)).toBe('select 1;')
     await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeDisabled()
