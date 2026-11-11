@@ -23,6 +23,4 @@ export interface Workspace {
   docs: AnswerDoc[]
   activeId: string
   ui: UiPrefs
-  /** ISO time of the last successful answer export, if any. */
-  lastExportAt: string | null
 }

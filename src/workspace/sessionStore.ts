@@ -43,7 +43,7 @@ export function createWorkspace(initialTabs: string[], persistent: boolean, ui: 
   const sessionId = randomId(16)
   const taken: string[] = []
   const docs = initialTabs.map((t) => {
-    const name = uniqueName(t, taken, 'Question')
+    const name = uniqueName(t, taken, 'Query')
     taken.push(name)
     return newDoc(name)
   })
@@ -55,7 +55,6 @@ export function createWorkspace(initialTabs: string[], persistent: boolean, ui: 
     docs,
     activeId: docs[0]!.id,
     ui: { ...ui },
-    lastExportAt: null,
   }
 }
 
@@ -107,7 +106,6 @@ export function parseWorkspace(raw: string | null): Workspace | null {
           : DEFAULT_UI.editorFraction,
       theme: ui.theme === 'light' || ui.theme === 'dark' || ui.theme === 'system' ? ui.theme : DEFAULT_UI.theme,
     },
-    lastExportAt: typeof v.lastExportAt === 'string' ? v.lastExportAt : null,
   }
 }
 
