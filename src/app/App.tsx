@@ -148,9 +148,6 @@ export function App() {
           'mismatch',
         )
       }
-      if (context === 'boot' && !i.seeded && i.datasetMismatch === null) {
-        addBanner('info', 'Welcome back: your query and your database were restored from this tab.', 'restored')
-      }
       if (context === 'restart' && i.seeded) {
         addBanner('warn', 'The database storage was missing, so the base dataset was loaded again.', 'reseeded')
       }
@@ -228,7 +225,6 @@ export function App() {
 
     ;(async () => {
       let w = loadWorkspace(store)
-      const restored = !!w
       if (!w) w = createWorkspace(persistentPossible)
       if (w.dbName && !idbAvailable) w = { ...w, dbName: null }
 
@@ -255,7 +251,6 @@ export function App() {
       saver.current!.schedule(w)
       saver.current!.flush()
       await openDb(w.dbName, 'boot')
-      if (!restored) dropBanner('restored')
       if (w.dbName) void cleanupOrphans(w)
     })()
 
@@ -410,11 +405,8 @@ export function App() {
       setLastRun(null)
       dropBanner('restart')
       dropBanner('reset')
-      if (mode === 'reset') {
-        addBanner('info', `The database was reset to “${next.name}”. Your query was kept.`, 'reset')
-      } else {
-        addBanner('info', `The database was cleared and the script was imported. Your query was kept.`, 'reset')
-        if (!stored) addBanner('warn', 'The imported script could not be kept in this tab: after a reload, Reset returns to the default database.', 'basestore')
+      if (mode === 'import' && !stored) {
+        addBanner('warn', 'The imported script could not be kept in this tab: after a reload, Reset returns to the default database.', 'basestore')
       }
       setAnnounce(mode === 'reset' ? 'The database was reset.' : 'The database was imported.')
       await refreshSchema()
@@ -667,10 +659,7 @@ export function App() {
           <div className="main-col" ref={mainCol} style={{ gridTemplateRows: `minmax(140px, ${ui?.editorFraction ?? 0.55}fr) auto minmax(140px, ${1 - (ui?.editorFraction ?? 0.55)}fr)` }}>
             <section className="panel editor-panel" id="editor-panel" aria-labelledby="query-title">
               <div className="panel-header editor-header">
-                <h2 id="query-title" className="query-name">
-                  <span className="file-dot" aria-hidden="true" />
-                  query.sql
-                </h2>
+                <h2 id="query-title">Query</h2>
                 <div className="run-actions">
                   <span className="db-status" data-state={status.state}>
                     {status.text}

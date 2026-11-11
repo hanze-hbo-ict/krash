@@ -33,7 +33,7 @@ KRASH_E2E_DEV=1 npx playwright test tests/e2e/spike.spec.ts   # PGlite spike, ag
 
 ## Using Krash
 
-- **One query editor**, `query.sql`. Keep several statements in it and run them one at a time by selecting them.
+- **One query editor.** Keep several statements in it and run them one at a time by selecting them.
 - **Run.** Ctrl/⌘ + Enter or **Run** runs the selection, or the whole tab if nothing is selected.
 - **Database pane.** A read-only schema tree, plus three actions in its header:
   - **Reset** restores the last imported database. Until something is imported, that is the default database.

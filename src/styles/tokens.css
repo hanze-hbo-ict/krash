@@ -10,7 +10,7 @@
   --bg: #f6f7f9;
   --panel: #ffffff;
   --ink: #202b3d;
-  --muted: #5f6878;
+  --muted: #69727f; /* Kopje uses #6b7484 (4.4:1 on --bg); this is the nearest grey meeting WCAG AA */
   --line: #dfe4ec;
   --line-strong: #c9d1dd;
   --accent: #315ac6;
