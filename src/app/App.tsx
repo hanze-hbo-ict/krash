@@ -33,14 +33,10 @@ import { txText } from './describe'
 
 type Phase = 'booting' | 'starting' | 'ready' | 'running' | 'restarting' | 'resetting' | 'failed'
 
-interface Banner {
-  id: string
-  level: 'info' | 'warn' | 'error'
-  text: string
-}
 
 const BUNDLED = bundledBase(DEFAULT_DATASET)
 const THEME_KEY = 'krash:theme'
+const DISCARDED = 'PostgreSQL was restarted from the last saved state; this run and any open transaction were discarded.'
 
 function readTheme(): ThemeChoice {
   try {
@@ -71,7 +67,8 @@ export function App() {
   const [schemaStale, setSchemaStale] = useState(false)
   const [txStatus, setTxStatus] = useState<TxStatus>('I')
   const [lastRun, setLastRun] = useState<RunRecord | null>(null)
-  const [banners, setBanners] = useState<Banner[]>([])
+  const [slowStart, setSlowStart] = useState(false)
+  const [importError, setImportError] = useState('')
   const [announce, setAnnounce] = useState('')
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
   const [importOpen, setImportOpen] = useState(false)
@@ -93,10 +90,6 @@ export function App() {
   wsRef.current = ws
   baseRef.current = base
 
-  const addBanner = useCallback((level: Banner['level'], text: string, id = randomId(6)) => {
-    setBanners((b) => [...b.filter((x) => x.id !== id), { id, level, text }])
-  }, [])
-  const dropBanner = (id: string) => setBanners((b) => b.filter((x) => x.id !== id))
 
   /** Update the workspace and schedule a save. */
   const updateWs = useCallback((fn: (w: Workspace) => Workspace) => {
@@ -135,25 +128,11 @@ export function App() {
     }
   }, [])
 
-  const handleInfo = useCallback(
-    (i: DbInfo, context: 'boot' | 'restart' | 'reset' | 'new') => {
-      setInfo(i)
-      setFailure(null)
-      setTxStatus('I')
-      dropBanner('mismatch')
-      if (i.datasetMismatch !== null) {
-        addBanner(
-          'warn',
-          `This tab’s database was made for a different dataset (“${i.datasetMismatch}”). Use Reset to load “${baseRef.current.name}”. Your query is not affected.`,
-          'mismatch',
-        )
-      }
-      if (context === 'restart' && i.seeded) {
-        addBanner('warn', 'The database storage was missing, so the base dataset was loaded again.', 'reseeded')
-      }
-    },
-    [addBanner],
-  )
+  const handleInfo = useCallback((i: DbInfo) => {
+    setInfo(i)
+    setFailure(null)
+    setTxStatus('I')
+  }, [])
 
   const openDb = useCallback(
     async (dbName: string | null, context: 'boot' | 'restart') => {
@@ -161,7 +140,7 @@ export function App() {
       setPhase(context === 'boot' ? 'starting' : 'restarting')
       try {
         const i = await c.request({ type: 'init', dbName, dataset: baseRef.current })
-        handleInfo(i, context)
+        handleInfo(i)
         setPhase('ready')
         await refreshSchema()
         return true
@@ -177,23 +156,11 @@ export function App() {
     [handleInfo, refreshSchema],
   )
 
-  const restartAfterLoss = useCallback(
-    async (reason: 'stopped' | 'crashed') => {
-      const w = wsRef.current
-      if (!w) return
-      const ok = await openDb(w.dbName, 'restart')
-      if (ok) {
-        addBanner(
-          reason === 'stopped' ? 'info' : 'warn',
-          reason === 'stopped'
-            ? 'Stopped. The database was reopened from its last saved state: the interrupted Run and any open transaction were discarded.'
-            : 'The PostgreSQL engine stopped unexpectedly and was restarted from its last saved state. The last Run and any open transaction were discarded.',
-          'restart',
-        )
-      }
-    },
-    [openDb, addBanner],
-  )
+  /** After Stop or a crash: reopen the same database from its last saved state. */
+  const restartAfterLoss = useCallback(async () => {
+    const w = wsRef.current
+    if (w) await openDb(w.dbName, 'restart')
+  }, [openDb])
 
   // ---- Boot ----------------------------------------------------------------------
   useEffect(() => {
@@ -217,10 +184,10 @@ export function App() {
     c.onCrash = () => {
       const id = activeRun.current
       setLastRun((r) =>
-        r && r.id === id ? { ...r, status: 'done', failure: { kind: 'crash', message: 'The PostgreSQL engine stopped unexpectedly while running this SQL.' } } : r,
+        r && r.id === id ? { ...r, status: 'done', failure: { kind: 'crash', message: `PostgreSQL stopped unexpectedly while running this SQL. ${DISCARDED}` } } : r,
       )
       activeRun.current = null
-      void restartAfterLoss('crashed')
+      void restartAfterLoss()
     }
 
     ;(async () => {
@@ -235,17 +202,9 @@ export function App() {
           const sessionId = randomId(16)
           w = { ...w, sessionId, generation: 1, dbName: dbNameFor(sessionId, 1) }
           await acquireSessionLock(sessionId, 100)
-          addBanner(
-            'warn',
-            'This looks like a duplicated tab. Your query was copied, but this tab has its own fresh database. The two tabs no longer share anything.',
-            'duplicate',
-          )
         }
       }
       if (disposed) return
-      if (store && !w.dbName) {
-        addBanner('warn', 'Browser database storage is unavailable: database changes will not survive a reload. Your query is still saved.', 'memdb')
-      }
       writeHeartbeat(local.current, w.sessionId)
       setWs(w)
       saver.current!.schedule(w)
@@ -269,18 +228,13 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Starting can be slow on old machines; say so instead of looking stuck.
+  // Starting can be slow on old machines; say so in the status instead of looking stuck.
   useEffect(() => {
-    if (phase !== 'starting' && phase !== 'restarting') {
-      dropBanner('slow')
-      return
-    }
-    const t = setTimeout(
-      () => addBanner('info', 'Still starting PostgreSQL… This can take a while on a slow computer. If nothing happens within a minute, reload the page.', 'slow'),
-      30_000,
-    )
+    setSlowStart(false)
+    if (phase !== 'starting' && phase !== 'restarting') return
+    const t = setTimeout(() => setSlowStart(true), 30_000)
     return () => clearTimeout(t)
-  }, [phase, addBanner])
+  }, [phase])
 
   // The query lives only in this browser tab: warn before closing it while there is SQL in it.
   useEffect(() => {
@@ -333,7 +287,6 @@ export function App() {
     setLastRun(record)
     setPhase('running')
     setAnnounce('Running…')
-    dropBanner('restart')
     try {
       const outcome = await c.request({ type: 'execute', sql: target.sql, maxRows: DEFAULT_LIMITS.maxRows })
       if (activeRun.current !== id) return
@@ -349,7 +302,8 @@ export function App() {
       if (outcome.txStatus !== 'E') void refreshSchema()
     } catch (err) {
       if (activeRun.current !== id) return
-      const f = err instanceof DbFailure ? err.failure : { kind: 'internal' as const, message: String(err) }
+      let f: WorkerFailure = err instanceof DbFailure ? err.failure : { kind: 'internal', message: String(err) }
+      if (f.kind === 'cancelled') f = { kind: 'cancelled', message: `Stopped. ${DISCARDED}` }
       setLastRun({ ...record, status: 'done', failure: f })
       if (f.kind !== 'crash' && f.kind !== 'cancelled') setPhase('ready')
       setAnnounce(`Problem: ${f.message}`)
@@ -362,7 +316,7 @@ export function App() {
     const c = client.current
     if (!c || phase !== 'running') return
     c.stop()
-    void restartAfterLoss('stopped')
+    void restartAfterLoss()
   }
 
   // Ctrl/Cmd+Enter outside the editor (e.g. on a tab or in results).
@@ -382,10 +336,11 @@ export function App() {
    * Build a fresh database from `next` in a new generation and swap to it only
    * when it loaded completely; otherwise the previous database stays in use.
    */
-  const rebuildDb = async (next: BaseDataset, mode: 'reset' | 'import') => {
+  /** Returns an error message, or null on success. */
+  const rebuildDb = async (next: BaseDataset, mode: 'reset' | 'import'): Promise<string | null> => {
     const c = client.current
     const w = wsRef.current
-    if (!c || !w) return
+    if (!c || !w) return 'The database is not available.'
     setPhase('resetting')
     setAnnounce(mode === 'reset' ? 'Resetting the database…' : 'Importing the database…')
     const generation = w.generation + 1
@@ -399,23 +354,33 @@ export function App() {
       saver.current?.flush()
       baseRef.current = next
       setBase(next)
-      const stored = saveBase(session.current, next)
-      handleInfo(i, 'reset')
+      saveBase(session.current, next)
+      handleInfo(i)
       setPhase('ready')
       setLastRun(null)
-      dropBanner('restart')
-      dropBanner('reset')
-      if (mode === 'import' && !stored) {
-        addBanner('warn', 'The imported script could not be kept in this tab: after a reload, Reset returns to the default database.', 'basestore')
-      }
       setAnnounce(mode === 'reset' ? 'The database was reset.' : 'The database was imported.')
       await refreshSchema()
       if (oldName) await c.request({ type: 'dropDatabase', dbName: oldName }).catch(() => {})
+      return null
     } catch (err) {
       const f = err instanceof DbFailure ? err.failure : { kind: 'internal' as const, message: String(err) }
-      if (f.kind === 'crash') return // the crash handler restarts the previous database
+      const message = `${f.message.replace(/\.?\s*$/, '.')} Your previous database is still in use.`
+      if (f.kind === 'crash') return message // the crash handler restarts the previous database
       setPhase(info ? 'ready' : 'failed')
-      addBanner('error', `${mode === 'reset' ? 'Reset' : 'Import'} failed: ${f.message} Your previous database is still in use.`, 'reset')
+      setAnnounce(`${mode === 'reset' ? 'Reset' : 'Import'} failed.`)
+      if (mode === 'reset') {
+        setLastRun({
+          id: ++runCounter.current,
+          isSelection: false,
+          lines: { from: 1, to: 1 },
+          startedAt: Date.now(),
+          status: 'done',
+          outcome: null,
+          failure: { kind: f.kind, message: `Reset failed: ${message}` },
+          errorLocation: null,
+        })
+      }
+      return message
     }
   }
 
@@ -432,9 +397,11 @@ export function App() {
       onConfirm: () => void rebuildDb(baseRef.current, 'reset'),
     })
 
-  const importDb = (sql: string) => {
-    setImportOpen(false)
-    void rebuildDb(importedBase(sql), 'import')
+  const importDb = async (sql: string) => {
+    setImportError('')
+    const error = await rebuildDb(importedBase(sql), 'import')
+    if (error) setImportError(error)
+    else setImportOpen(false)
   }
 
   const askClearWorkspace = () =>
@@ -475,11 +442,11 @@ export function App() {
     switch (phase) {
       case 'booting':
       case 'starting':
-        return { state: 'loading', text: 'Starting PostgreSQL…' }
+        return { state: 'loading', text: slowStart ? 'Still starting PostgreSQL…' : 'Starting PostgreSQL…' }
       case 'running':
         return { state: 'running', text: 'Running…' }
       case 'restarting':
-        return { state: 'running', text: 'Restarting PostgreSQL…' }
+        return { state: 'running', text: slowStart ? 'Still restarting PostgreSQL…' : 'Restarting PostgreSQL…' }
       case 'resetting':
         return { state: 'running', text: 'Resetting database…' }
       case 'failed':
@@ -503,6 +470,36 @@ export function App() {
   const cycleTheme = () => setTheme((t) => (t === 'system' ? 'light' : t === 'light' ? 'dark' : 'system'))
   const themeLabel = { system: 'System appearance', light: 'Light appearance', dark: 'Dark appearance' }[theme]
   const nextThemeLabel = { system: 'light', light: 'dark', dark: 'system' }[theme]
+
+  const failurePanel =
+    phase === 'failed' && failure ? (
+      <FailurePanel
+            failure={failure}
+            persistent={!!ws?.dbName}
+            onRetry={() => void openDb(wsRef.current?.dbName ?? null, 'boot')}
+            onNewDb={async () => {
+              const w = wsRef.current
+              if (!w) return
+              const generation = w.generation + 1
+              const next = { ...w, generation, dbName: w.dbName ? dbNameFor(w.sessionId, generation) : null }
+              setWs(next)
+              saver.current?.schedule(next)
+              saver.current?.flush()
+              const old = w.dbName
+              if (await openDb(next.dbName, 'boot')) {
+                if (old) await client.current?.request({ type: 'dropDatabase', dbName: old }).catch(() => {})
+              }
+            }}
+            onMemory={async () => {
+              const w = wsRef.current
+              if (!w) return
+              const next = { ...w, dbName: null }
+              setWs(next)
+              saver.current?.schedule(next)
+              await openDb(null, 'boot')
+            }}
+          />
+    ) : null
 
   return (
     <>
@@ -539,54 +536,6 @@ export function App() {
             {saveText}
           </p>
         </div>
-
-        {banners.length > 0 && (
-          <ul className="banners" aria-label="Notifications">
-            {banners.map((b) => (
-              <li key={b.id} className={`banner banner-${b.level}`}>
-                <span>
-                  <strong className="banner-level">{b.level === 'error' ? 'Important: ' : b.level === 'warn' ? 'Note: ' : ''}</strong>
-                  {b.text}
-                </span>
-                <button type="button" className="icon-button" aria-label="Dismiss notification" onClick={() => dropBanner(b.id)}>
-                  <svg viewBox="0 0 24 24" aria-hidden="true" className="icon">
-                    <path d="M6 6l12 12M18 6 6 18" />
-                  </svg>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-
-        {phase === 'failed' && failure && (
-          <FailurePanel
-            failure={failure}
-            persistent={!!ws?.dbName}
-            onRetry={() => void openDb(wsRef.current?.dbName ?? null, 'boot')}
-            onNewDb={async () => {
-              const w = wsRef.current
-              if (!w) return
-              const generation = w.generation + 1
-              const next = { ...w, generation, dbName: w.dbName ? dbNameFor(w.sessionId, generation) : null }
-              setWs(next)
-              saver.current?.schedule(next)
-              saver.current?.flush()
-              const old = w.dbName
-              if (await openDb(next.dbName, 'boot')) {
-                if (old) await client.current?.request({ type: 'dropDatabase', dbName: old }).catch(() => {})
-              }
-            }}
-            onMemory={async () => {
-              const w = wsRef.current
-              if (!w) return
-              const next = { ...w, dbName: null }
-              setWs(next)
-              saver.current?.schedule(next)
-              addBanner('warn', 'Using a temporary database: database changes will not survive a reload. Your query is still saved.', 'memdb')
-              await openDb(null, 'boot')
-            }}
-          />
-        )}
 
         <div className={`workspace${collapsed ? ' sidebar-collapsed' : ''}`}>
           <aside className="panel db-panel" aria-labelledby="db-title">
@@ -640,7 +589,7 @@ export function App() {
                 </button>
               </div>
               <div className="db-panel-body" id="db-panel-body" hidden={collapsed}>
-                <SchemaTree schema={schema} stale={schemaStale} />
+                <SchemaTree schema={schema} stale={schemaStale} unavailable={phase === 'failed'} />
                 <div className="db-panel-footer">
                   <p className="db-facts">
                     {info ? (
@@ -648,6 +597,8 @@ export function App() {
                         PostgreSQL {info.postgresVersion} · {base.name}
                         {!info.persistent && ' · temporary'}
                       </>
+                    ) : phase === 'failed' ? (
+                      'Not running'
                     ) : (
                       'Starting…'
                     )}
@@ -691,7 +642,7 @@ export function App() {
               containerRef={mainCol}
               onChange={(f) => updateWs((w) => ({ ...w, ui: { ...w.ui, editorFraction: f } }))}
             />
-            <ResultsPanel run={lastRun} onGoToError={goToError} />
+            <ResultsPanel run={lastRun} onGoToError={goToError} blocking={failurePanel} />
           </div>
         </div>
         <p className="workspace-motto">One database. One query at a time.</p>
@@ -702,6 +653,9 @@ export function App() {
         <span>No code completion or AI assistance. Everything runs in your browser, and your query is kept only in this tab.</span>
         <span className="storage-warning" hidden={!sessionMissing}>
           Session storage is unavailable: your query will be lost on reload.
+        </span>
+        <span className="storage-warning" hidden={sessionMissing || !ws || !!ws.dbName}>
+          Database storage is unavailable: database changes will be lost on reload.
         </span>
         <a className="footer-licenses" href="./THIRD_PARTY_NOTICES.txt">
           Licenses
@@ -716,7 +670,16 @@ export function App() {
       </div>
 
       <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} />
-      <ImportDatabaseDialog open={importOpen} onClose={() => setImportOpen(false)} onImport={importDb} />
+      <ImportDatabaseDialog
+        open={importOpen}
+        busy={phase === 'resetting'}
+        error={importError}
+        onClose={() => {
+          setImportOpen(false)
+          setImportError('')
+        }}
+        onImport={(sql) => void importDb(sql)}
+      />
     </>
   )
 }
@@ -735,10 +698,10 @@ function FailurePanel({
   onMemory: () => void
 }) {
   const advice: Record<string, string> = {
-    wasm: 'The PostgreSQL engine files could not be loaded. Reload the page. If this keeps happening, this computer may block WebAssembly or the Krash files are incomplete.',
-    storage: 'The browser refused or failed to open the database storage. You can try again, start a new database, or continue with a temporary database.',
-    seed: 'The dataset could not be loaded. Try again.',
-    crash: 'The database engine stopped while starting. Try again or start a new database.',
+    wasm: 'Reload the page. If this keeps happening, this computer may block WebAssembly or the Krash files are incomplete.',
+    storage: 'The browser could not open its database storage. Try again, start a new database, or use a temporary one.',
+    seed: 'Try again.',
+    crash: 'Try again, or start a new database.',
     internal: 'Something went wrong while starting the database.',
   }
   return (

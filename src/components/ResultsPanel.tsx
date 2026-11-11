@@ -3,7 +3,7 @@
  * produced a result, plus a text "Messages" view. Data is rendered with safe
  * text nodes only, and in bounded pages.
  */
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import type { ExecuteOutcome, StatementResult } from '../db/protocol'
 import type { RunRecord } from '../app/runTypes'
 import { describeOutcome, describeStatement, NUMERIC_OIDS } from '../app/describe'
@@ -13,9 +13,11 @@ const PAGE = 200
 interface Props {
   run: RunRecord | null
   onGoToError: (offset: number) => void
+  /** Shown instead of results, e.g. when the database cannot start. */
+  blocking?: ReactNode
 }
 
-export function ResultsPanel({ run, onGoToError }: Props) {
+export function ResultsPanel({ run, onGoToError, blocking }: Props) {
   const outcome = run?.outcome ?? null
   const results = outcome?.results ?? []
   // Statements that returned rows (or COPY output) get their own view.
@@ -76,7 +78,8 @@ export function ResultsPanel({ run, onGoToError }: Props) {
         {run?.outcome && <span className="run-meta">{runMeta(run)}</span>}
       </div>
       <div className="results-body" id="results-body" role="tabpanel" tabIndex={0} aria-label="Result details">
-        {!run && <p className="placeholder">Run SQL with the Run button or Ctrl/⌘ + Enter. Results appear here.</p>}
+        {blocking}
+        {!run && !blocking && <p className="placeholder">Run SQL with the Run button or Ctrl/⌘ + Enter. Results appear here.</p>}
         {run?.status === 'running' && <p className="placeholder">Running…</p>}
         {run && <ErrorBox run={run} onGoToError={onGoToError} />}
         {run && outcome && selected === 'messages' && <Messages run={run} outcome={outcome} />}
@@ -107,9 +110,9 @@ function ErrorBox({ run, onGoToError }: { run: RunRecord; onGoToError: (offset: 
     return (
       <div className="error-box" role="alert">
         <p className="error-title">
-          <strong>{run.failure.kind === 'cancelled' ? 'Stopped' : 'Problem running SQL'}</strong>
+          <strong>{run.failure.kind === 'cancelled' ? 'Stopped' : run.failure.kind === 'crash' ? 'PostgreSQL stopped' : 'Problem'}</strong>
         </p>
-        <p>{run.failure.message}</p>
+        <p>{run.failure.message.replace(/^Stopped\. /, '')}</p>
         {run.failure.detail && <p className="error-detail">{run.failure.detail}</p>}
       </div>
     )

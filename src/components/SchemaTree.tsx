@@ -9,6 +9,8 @@ import type { SchemaNamespace, SchemaRelation } from '../db/protocol'
 interface Props {
   schema: SchemaNamespace[] | null
   stale: boolean
+  /** The database failed to start. */
+  unavailable?: boolean
 }
 
 const KIND_LABEL: Record<SchemaRelation['kind'], string> = {
@@ -19,13 +21,13 @@ const KIND_LABEL: Record<SchemaRelation['kind'], string> = {
   'foreign table': 'foreign',
 }
 
-export function SchemaTree({ schema, stale }: Props) {
+export function SchemaTree({ schema, stale, unavailable }: Props) {
   // Expanded state survives schema refreshes; schemas start open, tables closed.
   const [open, setOpen] = useState<Record<string, boolean>>({})
   const isOpen = (key: string, dflt: boolean) => open[key] ?? dflt
   const toggle = (key: string, value: boolean) => setOpen((o) => (o[key] === value ? o : { ...o, [key]: value }))
 
-  if (!schema) return <p className="schema-empty">Waiting for the database…</p>
+  if (!schema) return <p className="schema-empty">{unavailable ? 'The database is not available.' : 'Waiting for the database…'}</p>
 
   return (
     <div className="schema-tree" aria-busy={stale || undefined}>

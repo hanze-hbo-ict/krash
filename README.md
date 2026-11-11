@@ -127,13 +127,14 @@ These were validated in the PGlite spike (`spike/`, `tests/e2e/spike.spec.ts`) b
      On reload the same database is reopened, not re-seeded. A dataset marker (a comment on the database) detects a
      mismatch with the expected base.
    - *Duplicated tabs* copy `sessionStorage`. A Web Lock per session detects the second tab. That tab gets its own new
-     database, keeps a copy of the query, and is told so. Two PGlite instances never write the same store.
+     database and keeps a copy of the query. Two PGlite instances never write the same store.
    - *Cleanup.* IndexedDB is durable, not session-scoped. Each tab writes a heartbeat to `localStorage` once a minute.
      On startup Krash deletes old generations of its own session and the databases of sessions that have been silent
      for more than 12 hours.
 7. **Reset and import swap only after validation.** Both build the next database generation from scratch and verify
    the dataset marker. Only then do they switch to it and delete the old one. A failed reset or import (for example a
-   script with an error) leaves the previous database in use and says so.
+   script with an error) leaves the previous database in use; an import error is shown in the Import dialog so the script
+   can be fixed.
 8. **No assistance by construction.** The CodeMirror 6 editor has highlighting, line numbers, selection, undo/redo and
    bracket matching. There is no autocompletion, linting, auto-closing brackets or formatting (E2E-tested). The schema
    tree is read-only and never generates SQL.

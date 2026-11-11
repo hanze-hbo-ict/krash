@@ -45,11 +45,14 @@ export const MAX_DATASET_BYTES = 2 * 1024 * 1024
 
 interface ImportDbProps {
   open: boolean
+  busy: boolean
+  /** Why the last import failed (the previous database is still in use). */
+  error: string
   onClose: () => void
   onImport: (sql: string) => void
 }
 
-export function ImportDatabaseDialog({ open, onClose, onImport }: ImportDbProps) {
+export function ImportDatabaseDialog({ open, busy, error, onClose, onImport }: ImportDbProps) {
   const [text, setText] = useState('')
   useEffect(() => {
     if (open) setText('')
@@ -85,10 +88,11 @@ export function ImportDatabaseDialog({ open, onClose, onImport }: ImportDbProps)
       />
       <div className="modal-message" role="status" aria-live="polite">
         {tooLarge && <p className="text-error">The script is larger than 2 MB, which is too large to import.</p>}
+        {error && !busy && <p className="text-error">Import failed: {error}</p>}
       </div>
       <div className="modal-actions">
-        <button type="button" className="danger" disabled={!text.trim() || tooLarge} onClick={() => onImport(text)}>
-          Clear database and import
+        <button type="button" className="danger" disabled={!text.trim() || tooLarge || busy} onClick={() => onImport(text)}>
+          {busy ? 'Importing…' : 'Clear database and import'}
         </button>
         <button type="button" onClick={onClose}>
           Cancel
