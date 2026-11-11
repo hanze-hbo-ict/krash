@@ -66,7 +66,7 @@ export function ImportDatabaseDialog({ open, onClose, onImport }: ImportDbProps)
       initialFocus="import-text"
       description={
         <p>
-          Paste a SQL script. The current database is cleared and the script is run on an empty database. Your queries are kept, and
+          Paste a SQL script. The current database is cleared and the script is run on an empty database. Your query is kept, and
           Reset returns to this imported database.
         </p>
       }

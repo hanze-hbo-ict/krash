@@ -30,19 +30,16 @@ for (const scheme of ['light', 'dark'] as const) {
   })
 }
 
-test('keyboard only: run, switch tabs and resize without a mouse', async ({ page }) => {
+test('keyboard only: run, switch result tabs and resize without a mouse', async ({ page }) => {
   await open(page)
   await page.locator('.cm-content').focus()
   await page.keyboard.insertText('select 1 as one;')
   await page.keyboard.press(`${MOD}+Enter`)
   await expect(page.locator('#results-body tbody td').first()).toHaveText('1')
-  await page.getByRole('button', { name: 'New query tab' }).focus()
-  await page.keyboard.press('Enter')
-  await expect(page.getByRole('tab', { name: 'Query 2' })).toHaveAttribute('aria-selected', 'true')
-  await page.getByRole('tab', { name: 'Query 2' }).focus()
-  await page.keyboard.press('ArrowLeft')
-  await expect(page.getByRole('tab', { name: 'Query 1' })).toBeFocused()
-  await expect(page.getByRole('tab', { name: 'Query 1' })).toHaveAttribute('aria-selected', 'true')
+  await page.getByRole('tab', { name: 'Result · 1 row' }).focus()
+  await page.keyboard.press('ArrowRight')
+  await expect(page.getByRole('tab', { name: 'Messages' })).toBeFocused()
+  await expect(page.getByRole('tab', { name: 'Messages' })).toHaveAttribute('aria-selected', 'true')
   const sep = page.getByRole('separator', { name: 'Resize editor and results' })
   await sep.focus()
   const before = Number(await sep.getAttribute('aria-valuenow'))
@@ -50,7 +47,7 @@ test('keyboard only: run, switch tabs and resize without a mouse', async ({ page
   await expect(sep).toHaveAttribute('aria-valuenow', String(before + 5))
 })
 
-test('Clear workspace removes answers and the database, then starts fresh', async ({ page }) => {
+test('Clear workspace removes the query and the database, then starts fresh', async ({ page }) => {
   await open(page)
   await page.locator('.cm-content').click()
   await page.keyboard.insertText('create table gone_t (x int);')

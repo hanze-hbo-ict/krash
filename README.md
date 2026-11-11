@@ -33,12 +33,11 @@ KRASH_E2E_DEV=1 npx playwright test tests/e2e/spike.spec.ts   # PGlite spike, ag
 
 ## Using Krash
 
-- **Query tabs.** A workspace starts with one tab, `Query 1`. Add, rename (double-click or F2) and delete tabs.
-  All tabs share one database.
+- **One query editor**, `query.sql`. Keep several statements in it and run them one at a time by selecting them.
 - **Run.** Ctrl/⌘ + Enter or **Run** runs the selection, or the whole tab if nothing is selected.
 - **Database pane.** A read-only schema tree, plus three actions in its header:
   - **Reset** restores the last imported database. Until something is imported, that is the default database.
-  - **Clear** clears the whole workspace: it deletes all tabs and this tab's database and starts fresh with the default
+  - **Clear** clears the whole workspace: it deletes the query and this tab's database and starts fresh with the default
     database.
   - **Import** takes a pasted SQL script: the current database is cleared and the script is run on an empty database.
 - **Default database.** It is deliberately tiny: one table, `people`, with three rows (`src/db/default.sql`). Import a script to replace it.
@@ -68,8 +67,8 @@ to other origins (an E2E test checks this).
  UI thread (React)                                   Dedicated worker (one per browser tab)
  ┌──────────────────────────────┐   typed requests   ┌─────────────────────────────────────────┐
  │ App · SqlEditor (CodeMirror) │ ─────────────────▶ │ db.worker.ts  (serial request queue)    │
- │ AnswerTabs · SchemaTree      │   id-matched       │  └ engine.ts: execute / introspect /    │
- │ ResultsPanel · Dialogs       │ ◀───────────────── │     seed / dataset marker               │
+ │ SchemaTree · ResultsPanel    │   id-matched       │  └ engine.ts: execute / introspect /    │
+ │ Dialogs · Splitter           │ ◀───────────────── │     seed / dataset marker               │
  │ workspace/* (sessionStorage) │   responses        │  └ PGlite 0.5.13 (PostgreSQL 18, WASM)  │
  └──────────────────────────────┘                    │     └ IndexedDB  /pglite/krash-<s>-<g>  │
                                                      └─────────────────────────────────────────┘
@@ -84,7 +83,7 @@ to other origins (an E2E test checks this).
 | `src/db/wire.ts` | Streaming PostgreSQL protocol reader with row/cell/result limits. |
 | `src/db/sqlLexer.ts` | Tiny lexer used **only** to refuse `COPY … FROM STDIN`, plus position → line/column helpers. |
 | `src/db/default.sql` | The default database. |
-| `src/workspace/*` | Tabs, session persistence, base dataset (default or imported), names, session lock. |
+| `src/workspace/*` | Session persistence, base dataset (default or imported), session lock. |
 | `src/components/*` | Focused UI components. `src/styles/tokens.css` holds all design tokens. |
 
 ### Key decisions
@@ -118,9 +117,9 @@ These were validated in the PGlite spike (`spike/`, `tests/e2e/spike.spec.ts`) b
    lexer that skips strings, comments, quoted identifiers and dollar-quoted bodies detects it. This is the only SQL
    analysis Krash does.
 6. **Persistence.**
-   - *Tabs and UI preferences* live in `sessionStorage`, written about 400 ms after the last edit and read back to
+   - *The query text and UI preferences* live in `sessionStorage`, written about 400 ms after the last edit and read back to
      confirm. They survive a reload of the same tab, not a closed tab. The workspace heading shows *Saving…*,
-     *Saved in this tab* or *Save failed*. Closing the tab while a tab contains SQL triggers the browser's
+     *Saved in this tab* or *Save failed*. Closing the tab while the editor contains SQL triggers the browser's
      leave-page warning.
    - *An imported script* is also kept in `sessionStorage`, up to 2 MB, so Reset and reload can rebuild it.
    - *The database* lives in IndexedDB under a per-session name `krash-<sessionId>-<generation>` (PGlite stores it as
@@ -128,7 +127,7 @@ These were validated in the PGlite spike (`spike/`, `tests/e2e/spike.spec.ts`) b
      On reload the same database is reopened, not re-seeded. A dataset marker (a comment on the database) detects a
      mismatch with the expected base.
    - *Duplicated tabs* copy `sessionStorage`. A Web Lock per session detects the second tab. That tab gets its own new
-     database, keeps a copy of the queries, and is told so. Two PGlite instances never write the same store.
+     database, keeps a copy of the query, and is told so. Two PGlite instances never write the same store.
    - *Cleanup.* IndexedDB is durable, not session-scoped. Each tab writes a heartbeat to `localStorage` once a minute.
      On startup Krash deletes old generations of its own session and the databases of sessions that have been silent
      for more than 12 hours.
@@ -156,7 +155,7 @@ variables in `src/styles/tokens.css`.
 ## Accessibility
 
 - Semantic landmarks and headings, a skip link, and visible focus everywhere.
-- ARIA tabs with arrow-key navigation for query and result tabs; F2 renames a tab and Delete removes it.
+- ARIA tabs with arrow-key navigation for statement results.
 - A splitter between editor and results that works from the keyboard (`↑`/`↓`).
 - Native `<dialog>` with focus return.
 - Live-region announcements for run results and errors, and text next to every colour cue.
@@ -169,7 +168,7 @@ variables in `src/styles/tokens.css`.
 | --- | --- |
 | `tests/unit` | Wire protocol reader (chunking, limits, errors), lexer, names, session persistence and orphan detection, base dataset storage. |
 | `tests/integration` | Real PGlite in Node against a realistic fixture (`tests/fixtures/webshop.sql`): seeding and marker, value formatting, multi-statement scripts, syntax and runtime errors, implicit and explicit transactions, joins/grouping/subqueries/CTEs/windows/views/DDL/DML, result bounding, `COPY` guard, notices, introspection. |
-| `tests/e2e/app.spec.ts` | Fresh workspace, DDL, multi-statement scripts, errors, selection, shared database across tabs, reload persistence, tab isolation, duplicated tab, reset, import (including a failing import), huge results, Stop, no completion, `COPY`, transactions, no foreign requests, missing WASM, blocked storage. |
+| `tests/e2e/app.spec.ts` | Fresh workspace, DDL, multi-statement scripts, errors, selection, reload persistence, isolation between browser tabs, duplicated tab, reset, import (including a failing import), huge results, Stop, no completion, `COPY`, transactions, no foreign requests, missing WASM, blocked storage. |
 | `tests/e2e/a11y.spec.ts` | axe (light/dark), keyboard-only workflow, Clear workspace. |
 | `tests/e2e/spike.spec.ts` | PGlite spike (dev server only). |
 
@@ -178,7 +177,7 @@ All suites pass in Chromium and WebKit. Firefox has not been run in the developm
 
 ## Known limitations
 
-- **Local storage is not a backup.** Tabs survive a reload of the same tab only; closing the tab loses them.
+- **Local storage is not a backup.** The query survives a reload of the same browser tab only; closing the tab loses it.
   Browsers and private windows can clear `sessionStorage` and IndexedDB at any time.
 - **Cancellation** works only by restarting the engine (decision 4).
 - **PostgreSQL coverage.** This is real PostgreSQL 18.6, single user and single connection, in WASM. Not available:
@@ -197,7 +196,7 @@ All suites pass in Chromium and WebKit. Firefox has not been run in the developm
 
 ```text
 src/app/          App orchestration, run records, message descriptions
-src/components/   SqlEditor, AnswerTabs, SchemaTree, ResultsPanel, Splitter, Modal, Dialogs, Icon
+src/components/   SqlEditor, SchemaTree, ResultsPanel, Splitter, Modal, Dialogs, Icon
 src/db/           worker, client, protocol, engine, wire reader, lexer, storage names, default database
 src/workspace/    types, sessionStore, sessionLock, baseDataset, names, ids
 src/styles/       tokens.css, layout.css

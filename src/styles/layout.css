@@ -548,64 +548,20 @@ main {
   padding: 6px 10px 6px 8px;
   align-items: center;
 }
-.answer-tabs {
+.query-name {
   display: flex;
   align-items: center;
-  gap: 4px;
-  min-width: 0;
-  flex: 1;
-}
-.tab-strip {
-  display: flex;
-  gap: 2px;
-  overflow-x: auto;
-  scrollbar-width: thin;
-  min-width: 0;
-  padding: 2px;
-}
-.tab {
-  border: 1px solid transparent;
-  background: transparent;
+  gap: 9px;
+  padding-left: 8px;
   font-family: var(--font-mono);
+  font-size: var(--text-base);
   font-weight: 500;
-  font-size: var(--text-m);
-  padding: 6px 10px;
-  border-radius: var(--radius-s);
-  white-space: nowrap;
-  max-width: 220px;
-  flex-shrink: 0;
-  color: var(--muted);
 }
-.tab-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.tab[aria-selected='true'] {
-  background: var(--soft);
-  color: var(--ink);
-  font-weight: 650;
-  border-color: var(--line);
-}
-.tab[aria-selected='true']::before {
-  content: '';
+.file-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: #6991dd;
-  flex-shrink: 0;
-}
-.tab-rename input {
-  font-family: var(--font-mono);
-  font-size: var(--text-m);
-  border: 1px solid var(--accent);
-  background: var(--panel);
-  border-radius: var(--radius-s);
-  padding: 5px 7px;
-  width: 180px;
-}
-.tab-actions {
-  display: flex;
-  gap: 1px;
   flex-shrink: 0;
 }
 .run-actions {

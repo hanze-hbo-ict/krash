@@ -1,5 +1,5 @@
 /**
- * Results of the last run of the active answer: one view per statement that
+ * Results of the last run: one view per statement that
  * produced a result, plus a text "Messages" view. Data is rendered with safe
  * text nodes only, and in bounded pages.
  */
@@ -98,7 +98,7 @@ function messagesLabel(run: RunRecord | null): string {
 
 function runMeta(run: RunRecord): string {
   const o = run.outcome!
-  const parts = [`${run.docName}${run.isSelection ? ' (selection)' : ''}`, `${o.durationMs} ms`]
+  const parts = [run.isSelection ? 'Selection' : 'Query', `${o.durationMs} ms`]
   return parts.join(' · ')
 }
 

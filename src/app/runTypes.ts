@@ -1,7 +1,7 @@
 import type { ExecuteOutcome, WorkerFailure } from '../db/protocol'
 
 export interface ErrorLocation {
-  /** Offset in the answer document (not only the selection). */
+  /** Offset in the editor text (not only the selection). */
   offset: number
   line: number
   col: number
@@ -11,8 +11,6 @@ export interface ErrorLocation {
 
 export interface RunRecord {
   id: number
-  docId: string
-  docName: string
   isSelection: boolean
   /** 1-based line range of the executed text within the document. */
   lines: { from: number; to: number }

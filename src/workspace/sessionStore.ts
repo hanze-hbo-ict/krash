@@ -1,15 +1,14 @@
 /**
- * Session-scoped persistence of the answer workspace.
+ * Session-scoped persistence of the workspace.
  *
- * - Answers, tabs and UI preferences live in sessionStorage: they survive a
+ * - The query text and UI preferences live in sessionStorage: they survive a
  *   reload of the same browser tab, not a closed tab.
  * - The database lives in IndexedDB under a per-session name (see storageNames).
  *   IndexedDB is durable storage, so we keep a heartbeat in localStorage and
  *   delete databases of sessions that have been silent for a long time.
  */
-import type { AnswerDoc, UiPrefs, Workspace } from './types'
+import type { UiPrefs, Workspace } from './types'
 import { randomId } from './ids'
-import { sanitizeName, uniqueName } from './names'
 import { dbNameFor, parseDbName } from '../db/storageNames'
 
 export const WORKSPACE_KEY = 'krash:v1:workspace'
@@ -18,7 +17,6 @@ export const HEARTBEAT_PREFIX = 'krash:v1:alive:'
 export const ORPHAN_AFTER_MS = 12 * 60 * 60 * 1000
 export const HEARTBEAT_INTERVAL_MS = 60 * 1000
 export const MAX_SQL_LENGTH = 1_000_000
-export const MAX_DOCS = 50
 
 export const DEFAULT_UI: UiPrefs = { sidebarCollapsed: false, editorFraction: 0.55, theme: 'system' }
 
@@ -35,25 +33,14 @@ export function safeStorage(kind: 'session' | 'local'): Storage | null {
   }
 }
 
-export function newDoc(name: string, sql = ''): AnswerDoc {
-  return { id: randomId(10), name, sql }
-}
-
-export function createWorkspace(initialTabs: string[], persistent: boolean, ui: UiPrefs = DEFAULT_UI): Workspace {
+export function createWorkspace(persistent: boolean, ui: UiPrefs = DEFAULT_UI): Workspace {
   const sessionId = randomId(16)
-  const taken: string[] = []
-  const docs = initialTabs.map((t) => {
-    const name = uniqueName(t, taken, 'Query')
-    taken.push(name)
-    return newDoc(name)
-  })
   return {
     version: 1,
     sessionId,
     dbName: persistent ? dbNameFor(sessionId, 1) : null,
     generation: 1,
-    docs,
-    activeId: docs[0]!.id,
+    sql: '',
     ui: { ...ui },
   }
 }
@@ -73,15 +60,14 @@ export function parseWorkspace(raw: string | null): Workspace | null {
   }
   if (!isObj(v) || v.version !== 1) return null
   if (typeof v.sessionId !== 'string' || !/^[a-z0-9]{8,40}$/.test(v.sessionId)) return null
-  if (!Array.isArray(v.docs) || v.docs.length === 0) return null
-  const docs: AnswerDoc[] = []
-  const taken: string[] = []
-  for (const d of v.docs.slice(0, MAX_DOCS)) {
-    if (!isObj(d) || typeof d.id !== 'string' || typeof d.name !== 'string' || typeof d.sql !== 'string') return null
-    const name = uniqueName(sanitizeName(d.name), taken, 'Answer')
-    taken.push(name)
-    docs.push({ id: d.id.slice(0, 40), name, sql: d.sql.slice(0, MAX_SQL_LENGTH) })
-  }
+  let sql: string
+  if (typeof v.sql === 'string') sql = v.sql
+  else if (Array.isArray(v.docs)) {
+    // Earlier versions had several query tabs: keep the active one.
+    const docs = v.docs.filter((d): d is Record<string, unknown> => isObj(d) && typeof d.sql === 'string')
+    const active = docs.find((d) => d.id === v.activeId) ?? docs[0]
+    sql = typeof active?.sql === 'string' ? active.sql : ''
+  } else return null
   const generation = typeof v.generation === 'number' && Number.isInteger(v.generation) && v.generation > 0 ? v.generation : 1
   let dbName: string | null = null
   if (typeof v.dbName === 'string') {
@@ -90,14 +76,12 @@ export function parseWorkspace(raw: string | null): Workspace | null {
     dbName = v.dbName
   }
   const ui = isObj(v.ui) ? v.ui : {}
-  const activeId = typeof v.activeId === 'string' && docs.some((d) => d.id === v.activeId) ? v.activeId : docs[0]!.id
   return {
     version: 1,
     sessionId: v.sessionId,
     dbName,
     generation,
-    docs,
-    activeId,
+    sql: sql.slice(0, MAX_SQL_LENGTH),
     ui: {
       sidebarCollapsed: typeof ui.sidebarCollapsed === 'boolean' ? ui.sidebarCollapsed : DEFAULT_UI.sidebarCollapsed,
       editorFraction:

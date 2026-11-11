@@ -39,8 +39,7 @@ test.describe('Krash', () => {
     await open(page)
     const tree = page.locator('.schema-tree')
     await expect(tree.getByText('people', { exact: true })).toBeVisible()
-    await expect(page.getByRole('tab')).toHaveCount(1)
-    await expect(page.getByRole('tab', { name: 'Query 1' })).toHaveAttribute('aria-selected', 'true')
+    await expect(page.getByRole('heading', { name: 'query.sql' })).toBeVisible()
     await expect.poll(() => editorText(page)).toBe('')
 
     await setSql(page, 'select count(*) as n from people;')
@@ -105,39 +104,24 @@ test.describe('Krash', () => {
     await expect(page.locator('.db-status')).toHaveText('Ready')
     await expect(results(page).locator('tbody td').first()).toHaveText('222')
     await expect(page.getByRole('tab', { name: /Result · 1 row/ })).toBeVisible()
-    await expect(page.locator('.run-meta')).toContainText('(selection)')
+    await expect(page.locator('.run-meta')).toContainText('Selection')
   })
 
-  test('6–7: three tabs share one database; answers and DB survive a reload without re-seeding', async ({ page }) => {
+  test('6–7: the query and database changes survive a reload without re-seeding', async ({ page }) => {
     await open(page)
-    await setSql(page, 'create table shared_t (n int);')
+    await setSql(page, 'create table shared_t (n int);\ninsert into shared_t values (42);')
     await run(page)
-    await page.getByRole('button', { name: 'New query tab' }).click()
-    await expect(page.getByRole('tab', { name: 'Query 2' })).toHaveAttribute('aria-selected', 'true')
-    await setSql(page, 'insert into shared_t values (42);')
-    await run(page)
-    await page.getByRole('button', { name: 'New query tab' }).click()
-    await expect(page.getByRole('tab', { name: 'Query 3' })).toHaveAttribute('aria-selected', 'true')
     await setSql(page, 'select n from shared_t;')
-    await run(page)
-    await expect(results(page).locator('tbody td').first()).toHaveText('42')
-
-    await page.getByRole('tab', { name: 'Query 1' }).click()
-    await expect.poll(() => editorText(page)).toBe('create table shared_t (n int);')
-
     await page.waitForTimeout(600) // debounce
     await page.reload()
     await expect(page.locator('.db-status')).toHaveText('Ready', { timeout: 60_000 })
     await expect(page.getByText('Welcome back')).toBeVisible()
-    await expect(page.getByRole('tab', { name: 'Query 1' })).toHaveAttribute('aria-selected', 'true')
-    await expect.poll(() => editorText(page)).toBe('create table shared_t (n int);')
-    await page.getByRole('tab', { name: 'Query 3' }).click()
     await expect.poll(() => editorText(page)).toBe('select n from shared_t;')
     await run(page)
     await expect(results(page).locator('tbody td').first()).toHaveText('42')
   })
 
-  test('8: a new tab gets its own fresh database and empty answers', async ({ page, context }) => {
+  test('8: a new browser tab gets its own fresh database and an empty query', async ({ page, context }) => {
     await open(page)
     await setSql(page, 'create table only_here (x int);')
     await run(page)
@@ -171,7 +155,7 @@ test.describe('Krash', () => {
     await expect(results(page).locator('tbody td').first()).toHaveText('f')
   })
 
-  test('9: Reset database restores the seed and keeps answers', async ({ page }) => {
+  test('9: Reset database restores the base database and keeps the query', async ({ page }) => {
     await open(page)
     await setSql(page, 'delete from people;')
     await run(page)
@@ -299,12 +283,12 @@ test.describe('Krash', () => {
 })
 
 test.describe('failure states', () => {
-  test('12: missing WASM produces a comprehensible error, answers stay editable', async ({ page, context }) => {
+  test('12: missing WASM produces a comprehensible error, the query stays editable', async ({ page, context }) => {
     // context.route also intercepts requests made by the database worker.
     await context.route('**/*.wasm', (route) => route.abort())
     await page.goto('/')
     await expect(page.getByRole('heading', { name: 'The database is not available' })).toBeVisible({ timeout: 60_000 })
-    await expect(page.getByText('Your queries are safe')).toBeVisible()
+    await expect(page.getByText('Your query is safe')).toBeVisible()
     await setSql(page, 'select 1;')
     await expect.poll(() => editorText(page)).toBe('select 1;')
     await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeDisabled()

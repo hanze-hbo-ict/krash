@@ -2,8 +2,6 @@
  * CodeMirror 6 SQL editor. Deliberately minimal: highlighting, line numbers,
  * selection, undo/redo, bracket matching. No autocompletion, linting, snippets,
  * auto-closing brackets or formatting.
- *
- * One EditorState per answer tab is kept so every tab has its own undo history.
  */
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 import { EditorState, Prec, type Extension } from '@codemirror/state'
@@ -56,21 +54,18 @@ export interface SqlEditorHandle {
 }
 
 interface Props {
-  docId: string
   initialText: string
   label: string
-  onChange: (docId: string, text: string) => void
+  onChange: (text: string) => void
   onRun: () => void
 }
 
 export const SqlEditor = forwardRef<SqlEditorHandle, Props>(function SqlEditor(
-  { docId, initialText, label, onChange, onRun },
+  { initialText, label, onChange, onRun },
   ref,
 ) {
   const host = useRef<HTMLDivElement>(null)
   const view = useRef<EditorView | null>(null)
-  const states = useRef(new Map<string, EditorState>())
-  const currentDoc = useRef(docId)
   const onChangeRef = useRef(onChange)
   const onRunRef = useRef(onRun)
   onChangeRef.current = onChange
@@ -105,22 +100,13 @@ export const SqlEditor = forwardRef<SqlEditorHandle, Props>(function SqlEditor(
     theme,
     EditorView.contentAttributes.of({ spellcheck: 'false', autocorrect: 'off', autocapitalize: 'off', 'aria-multiline': 'true' }),
     EditorView.updateListener.of((u) => {
-      if (u.docChanged) onChangeRef.current(currentDoc.current, u.state.doc.toString())
+      if (u.docChanged) onChangeRef.current(u.state.doc.toString())
     }),
   ]).current
 
-  const stateFor = (id: string, text: string) => {
-    let s = states.current.get(id)
-    if (!s) {
-      s = EditorState.create({ doc: text, extensions })
-      states.current.set(id, s)
-    }
-    return s
-  }
-
   useEffect(() => {
     if (!host.current) return
-    const v = new EditorView({ state: stateFor(docId, initialText), parent: host.current })
+    const v = new EditorView({ state: EditorState.create({ doc: initialText, extensions }), parent: host.current })
     view.current = v
     return () => {
       v.destroy()
@@ -129,31 +115,16 @@ export const SqlEditor = forwardRef<SqlEditorHandle, Props>(function SqlEditor(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Switch tabs: stash the current state, restore (or create) the next one.
+  // External replacement of the text (e.g. Clear): start a fresh state.
   useEffect(() => {
     const v = view.current
-    if (!v || currentDoc.current === docId) return
-    states.current.set(currentDoc.current, v.state)
-    currentDoc.current = docId
-    v.setState(stateFor(docId, initialText))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [docId])
-
-  // External replacement of a document's text (import / clear): reset its state.
-  useEffect(() => {
-    const v = view.current
-    if (!v || currentDoc.current !== docId) return
-    if (v.state.doc.toString() !== initialText) {
-      const s = EditorState.create({ doc: initialText, extensions })
-      states.current.set(docId, s)
-      v.setState(s)
-    }
+    if (v && v.state.doc.toString() !== initialText) v.setState(EditorState.create({ doc: initialText, extensions }))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialText])
 
   useEffect(() => {
     view.current?.contentDOM.setAttribute('aria-label', label)
-  }, [label, docId])
+  }, [label])
 
   useImperativeHandle(ref, () => ({
     focus: () => view.current?.focus(),

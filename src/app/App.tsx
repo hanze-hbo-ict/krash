@@ -11,7 +11,6 @@ import {
   findOrphans,
   HEARTBEAT_INTERVAL_MS,
   loadWorkspace,
-  newDoc,
   pruneHeartbeats,
   readHeartbeats,
   removeHeartbeat,
@@ -22,10 +21,8 @@ import {
 } from '../workspace/sessionStore'
 import { acquireSessionLock } from '../workspace/sessionLock'
 import { randomId } from '../workspace/ids'
-import { nextTabName, sanitizeName, uniqueName } from '../workspace/names'
 import { bundledBase, clearBase, importedBase, loadBase, saveBase, type BaseDataset } from '../workspace/baseDataset'
 import { SqlEditor, type SqlEditorHandle } from '../components/SqlEditor'
-import { AnswerTabs } from '../components/AnswerTabs'
 import { SchemaTree } from '../components/SchemaTree'
 import { ResultsPanel } from '../components/ResultsPanel'
 import { Splitter } from '../components/Splitter'
@@ -43,7 +40,6 @@ interface Banner {
 }
 
 const BUNDLED = bundledBase(DEFAULT_DATASET)
-const INITIAL_TABS = ['Query 1']
 const THEME_KEY = 'krash:theme'
 
 function readTheme(): ThemeChoice {
@@ -74,7 +70,7 @@ export function App() {
   const [schema, setSchema] = useState<SchemaNamespace[] | null>(null)
   const [schemaStale, setSchemaStale] = useState(false)
   const [txStatus, setTxStatus] = useState<TxStatus>('I')
-  const [runs, setRuns] = useState<Record<string, RunRecord>>({})
+  const [lastRun, setLastRun] = useState<RunRecord | null>(null)
   const [banners, setBanners] = useState<Banner[]>([])
   const [announce, setAnnounce] = useState('')
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
@@ -148,12 +144,12 @@ export function App() {
       if (i.datasetMismatch !== null) {
         addBanner(
           'warn',
-          `This tab’s database was made for a different dataset (“${i.datasetMismatch}”). Use Reset to load “${baseRef.current.name}”. Your queries are not affected.`,
+          `This tab’s database was made for a different dataset (“${i.datasetMismatch}”). Use Reset to load “${baseRef.current.name}”. Your query is not affected.`,
           'mismatch',
         )
       }
       if (context === 'boot' && !i.seeded && i.datasetMismatch === null) {
-        addBanner('info', 'Welcome back: your queries and your database were restored from this tab.', 'restored')
+        addBanner('info', 'Welcome back: your query and your database were restored from this tab.', 'restored')
       }
       if (context === 'restart' && i.seeded) {
         addBanner('warn', 'The database storage was missing, so the base dataset was loaded again.', 'reseeded')
@@ -222,13 +218,10 @@ export function App() {
     const c = new DbClient()
     client.current = c
     c.onCrash = () => {
-      setRuns((r) => {
-        const id = activeRun.current
-        if (id === null) return r
-        const entry = Object.entries(r).find(([, v]) => v.id === id)
-        if (!entry) return r
-        return { ...r, [entry[0]]: { ...entry[1], status: 'done', failure: { kind: 'crash', message: 'The PostgreSQL engine stopped unexpectedly while running this SQL.' } } }
-      })
+      const id = activeRun.current
+      setLastRun((r) =>
+        r && r.id === id ? { ...r, status: 'done', failure: { kind: 'crash', message: 'The PostgreSQL engine stopped unexpectedly while running this SQL.' } } : r,
+      )
       activeRun.current = null
       void restartAfterLoss('crashed')
     }
@@ -236,7 +229,7 @@ export function App() {
     ;(async () => {
       let w = loadWorkspace(store)
       const restored = !!w
-      if (!w) w = createWorkspace(INITIAL_TABS, persistentPossible)
+      if (!w) w = createWorkspace(persistentPossible)
       if (w.dbName && !idbAvailable) w = { ...w, dbName: null }
 
       // A duplicated tab carries a copy of this session: give it its own database.
@@ -248,14 +241,14 @@ export function App() {
           await acquireSessionLock(sessionId, 100)
           addBanner(
             'warn',
-            'This looks like a duplicated tab. Your queries were copied, but this tab has its own fresh database. The two tabs no longer share anything.',
+            'This looks like a duplicated tab. Your query was copied, but this tab has its own fresh database. The two tabs no longer share anything.',
             'duplicate',
           )
         }
       }
       if (disposed) return
       if (store && !w.dbName) {
-        addBanner('warn', 'Browser database storage is unavailable: database changes will not survive a reload. Queries are still saved.', 'memdb')
+        addBanner('warn', 'Browser database storage is unavailable: database changes will not survive a reload. Your query is still saved.', 'memdb')
       }
       writeHeartbeat(local.current, w.sessionId)
       setWs(w)
@@ -294,11 +287,11 @@ export function App() {
     return () => clearTimeout(t)
   }, [phase, addBanner])
 
-  // Answers live only in this tab: warn before closing it while there is SQL in it.
+  // The query lives only in this browser tab: warn before closing it while there is SQL in it.
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
       saver.current?.flush()
-      if (wsRef.current?.docs.some((d) => d.sql.trim() !== '')) {
+      if (wsRef.current?.sql.trim()) {
         e.preventDefault()
         e.returnValue = ''
       }
@@ -319,77 +312,14 @@ export function App() {
     }
   }
 
-  // ---- Answers ---------------------------------------------------------------------
-  const docs = ws?.docs ?? []
-  const activeDoc = docs.find((d) => d.id === ws?.activeId) ?? docs[0] ?? null
-
-  const onEdit = useCallback(
-    (docId: string, text: string) => {
-      updateWs((w) => ({ ...w, docs: w.docs.map((d) => (d.id === docId ? { ...d, sql: text } : d)) }))
-    },
-    [updateWs],
-  )
-
-  const selectDoc = (id: string) => updateWs((w) => (w.activeId === id ? w : { ...w, activeId: id }))
-
-  const addDoc = () => {
-    updateWs((w) => {
-      if (w.docs.length >= 50) {
-        addBanner('warn', 'You have reached the maximum of 50 query tabs.', 'maxdocs')
-        return w
-      }
-      const d = newDoc(nextTabName(w.docs.map((x) => x.name)))
-      return { ...w, docs: [...w.docs, d], activeId: d.id }
-    })
-    setTimeout(() => editor.current?.focus(), 0)
-  }
-
-  const renameDoc = (id: string, raw: string) => {
-    updateWs((w) => {
-      const others = w.docs.filter((d) => d.id !== id).map((d) => d.name)
-      const name = sanitizeName(raw)
-      if (!name) return w
-      const unique = uniqueName(name, others)
-      return { ...w, docs: w.docs.map((d) => (d.id === id ? { ...d, name: unique } : d)) }
-    })
-  }
-
-  const requestDelete = (id: string) => {
-    const doc = wsRef.current?.docs.find((d) => d.id === id)
-    if (!doc) return
-    setConfirm({
-      title: 'Delete query tab?',
-      body: (
-        <p>
-          Delete “{doc.name}”{doc.sql.trim() ? ' and its SQL' : ''}? This cannot be undone. The database is not changed.
-        </p>
-      ),
-      confirmLabel: 'Delete tab',
-      danger: true,
-      onConfirm: () => {
-        updateWs((w) => {
-          let rest = w.docs.filter((d) => d.id !== id)
-          if (rest.length === 0) rest = [newDoc(nextTabName([]))]
-          const idx = w.docs.findIndex((d) => d.id === id)
-          const activeId = w.activeId === id ? rest[Math.min(idx, rest.length - 1)]!.id : w.activeId
-          return { ...w, docs: rest, activeId }
-        })
-        setRuns((r) => {
-          const { [id]: _removed, ...rest } = r
-          return rest
-        })
-        setAnnounce(`Deleted ${doc.name}.`)
-      },
-    })
-  }
+  // ---- Query text ---------------------------------------------------------------------
+  const onEdit = useCallback((text: string) => updateWs((w) => (w.sql === text ? w : { ...w, sql: text })), [updateWs])
 
   // ---- Running SQL -------------------------------------------------------------------
   const run = useCallback(async () => {
     const c = client.current
     const w = wsRef.current
     if (!c || !w || phase !== 'ready' || !editor.current) return
-    const doc = w.docs.find((d) => d.id === w.activeId)
-    if (!doc) return
     const target = editor.current.getRunTarget()
     const id = ++runCounter.current
     activeRun.current = id
@@ -397,8 +327,6 @@ export function App() {
     const toLine = offsetToLineCol(target.docText, target.offset + target.sql.length).line
     const record: RunRecord = {
       id,
-      docId: doc.id,
-      docName: doc.name,
       isSelection: target.isSelection,
       lines: { from: fromLine, to: toLine },
       startedAt: Date.now(),
@@ -407,7 +335,7 @@ export function App() {
       failure: null,
       errorLocation: null,
     }
-    setRuns((r) => ({ ...r, [doc.id]: record }))
+    setLastRun(record)
     setPhase('running')
     setAnnounce('Running…')
     dropBanner('restart')
@@ -415,7 +343,7 @@ export function App() {
       const outcome = await c.request({ type: 'execute', sql: target.sql, maxRows: DEFAULT_LIMITS.maxRows })
       if (activeRun.current !== id) return
       const errorLocation = outcome.error ? errorLocationFor(target.sql, target.offset, target.docText, outcome.error.position) : null
-      setRuns((r) => ({ ...r, [doc.id]: { ...record, status: 'done', outcome, errorLocation } }))
+      setLastRun({ ...record, status: 'done', outcome, errorLocation })
       setTxStatus(outcome.txStatus)
       setPhase('ready')
       setAnnounce(
@@ -427,7 +355,7 @@ export function App() {
     } catch (err) {
       if (activeRun.current !== id) return
       const f = err instanceof DbFailure ? err.failure : { kind: 'internal' as const, message: String(err) }
-      setRuns((r) => ({ ...r, [doc.id]: { ...record, status: 'done', failure: f } }))
+      setLastRun({ ...record, status: 'done', failure: f })
       if (f.kind !== 'crash' && f.kind !== 'cancelled') setPhase('ready')
       setAnnounce(`Problem: ${f.message}`)
     } finally {
@@ -479,13 +407,13 @@ export function App() {
       const stored = saveBase(session.current, next)
       handleInfo(i, 'reset')
       setPhase('ready')
-      setRuns({})
+      setLastRun(null)
       dropBanner('restart')
       dropBanner('reset')
       if (mode === 'reset') {
-        addBanner('info', `The database was reset to “${next.name}”. Your queries were kept.`, 'reset')
+        addBanner('info', `The database was reset to “${next.name}”. Your query was kept.`, 'reset')
       } else {
-        addBanner('info', `The database was cleared and the script was imported. Your queries were kept.`, 'reset')
+        addBanner('info', `The database was cleared and the script was imported. Your query was kept.`, 'reset')
         if (!stored) addBanner('warn', 'The imported script could not be kept in this tab: after a reload, Reset returns to the default database.', 'basestore')
       }
       setAnnounce(mode === 'reset' ? 'The database was reset.' : 'The database was imported.')
@@ -504,7 +432,7 @@ export function App() {
       title: 'Reset database?',
       body: (
         <p>
-          This removes every change you made to the database (tables, rows, views…) and restores “{base.name}”. Your answer tabs and their SQL are kept.
+          This removes every change you made to the database (tables, rows, views…) and restores “{base.name}”. Your query is kept.
         </p>
       ),
       confirmLabel: 'Reset database',
@@ -522,7 +450,7 @@ export function App() {
       title: 'Clear this workspace?',
       body: (
         <>
-          <p>This deletes all queries and this tab’s database from the browser, then starts an empty workspace with the default database.</p>
+          <p>This deletes your query and this tab’s database from the browser, then starts an empty workspace with the default database.</p>
           <p>This cannot be undone.</p>
         </>
       ),
@@ -550,7 +478,6 @@ export function App() {
   const goToError = (offset: number) => editor.current?.moveTo(offset)
   const ui = ws?.ui
   const collapsed = !!ui?.sidebarCollapsed
-  const run_ = activeDoc ? runs[activeDoc.id] ?? null : null
 
   const status = (() => {
     switch (phase) {
@@ -663,7 +590,7 @@ export function App() {
               const next = { ...w, dbName: null }
               setWs(next)
               saver.current?.schedule(next)
-              addBanner('warn', 'Using a temporary database: database changes will not survive a reload. Queries are still saved.', 'memdb')
+              addBanner('warn', 'Using a temporary database: database changes will not survive a reload. Your query is still saved.', 'memdb')
               await openDb(null, 'boot')
             }}
           />
@@ -738,19 +665,12 @@ export function App() {
             </aside>
 
           <div className="main-col" ref={mainCol} style={{ gridTemplateRows: `minmax(140px, ${ui?.editorFraction ?? 0.55}fr) auto minmax(140px, ${1 - (ui?.editorFraction ?? 0.55)}fr)` }}>
-            <section className="panel editor-panel" id="editor-panel" aria-label="SQL editor">
+            <section className="panel editor-panel" id="editor-panel" aria-labelledby="query-title">
               <div className="panel-header editor-header">
-                {ws && activeDoc && (
-                  <AnswerTabs
-                    docs={docs}
-                    activeId={activeDoc.id}
-                    onSelect={selectDoc}
-                    onAdd={addDoc}
-                    onRename={renameDoc}
-                    onRequestDelete={requestDelete}
-                    panelId="editor-body"
-                  />
-                )}
+                <h2 id="query-title" className="query-name">
+                  <span className="file-dot" aria-hidden="true" />
+                  query.sql
+                </h2>
                 <div className="run-actions">
                   <span className="db-status" data-state={status.state}>
                     {status.text}
@@ -766,29 +686,15 @@ export function App() {
                       data-action="run"
                       onClick={() => void run()}
                       disabled={phase !== 'ready'}
-                      title="Run the selection, or the whole tab (Ctrl/⌘ + Enter)"
+                      title="Run the selection, or the whole query (Ctrl/⌘ + Enter)"
                     >
                       <Icon name="play" /> Run
                     </button>
                   )}
                 </div>
               </div>
-              <div
-                className="editor-body"
-                id="editor-body"
-                role="tabpanel"
-                aria-labelledby={activeDoc ? `tab-${activeDoc.id}` : undefined}
-              >
-                {ws && activeDoc && (
-                  <SqlEditor
-                    ref={editor}
-                    docId={activeDoc.id}
-                    initialText={activeDoc.sql}
-                    label={`SQL for ${activeDoc.name}`}
-                    onChange={onEdit}
-                    onRun={() => void run()}
-                  />
-                )}
+              <div className="editor-body" id="editor-body">
+                {ws && <SqlEditor ref={editor} initialText={ws.sql} label="SQL query" onChange={onEdit} onRun={() => void run()} />}
               </div>
             </section>
             <Splitter
@@ -796,7 +702,7 @@ export function App() {
               containerRef={mainCol}
               onChange={(f) => updateWs((w) => ({ ...w, ui: { ...w.ui, editorFraction: f } }))}
             />
-            <ResultsPanel run={run_} onGoToError={goToError} />
+            <ResultsPanel run={lastRun} onGoToError={goToError} />
           </div>
         </div>
         <p className="workspace-motto">One database. One query at a time.</p>
@@ -804,9 +710,9 @@ export function App() {
 
       <footer className="app-footer">
         <a href="https://github.com/hanze-hbo-ict/krash">Krash on GitHub</a>
-        <span>No code completion or AI assistance. Everything runs in your browser, and your queries are kept only in this tab.</span>
+        <span>No code completion or AI assistance. Everything runs in your browser, and your query is kept only in this tab.</span>
         <span className="storage-warning" hidden={!sessionMissing}>
-          Session storage is unavailable: your queries will be lost on reload.
+          Session storage is unavailable: your query will be lost on reload.
         </span>
         <a className="footer-licenses" href="./THIRD_PARTY_NOTICES.txt">
           Licenses
@@ -857,7 +763,7 @@ function FailurePanel({
           <pre>{failure.detail}</pre>
         </details>
       )}
-      <p>Your queries are safe and you can keep editing them.</p>
+      <p>Your query is safe and you can keep editing it.</p>
       <div className="failure-actions">
         <button type="button" className="primary" onClick={onRetry}>
           Try again

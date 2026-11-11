@@ -25,20 +25,18 @@ class MemoryStorage implements Storage {
 }
 
 describe('workspace persistence', () => {
-  it('creates a workspace with the configured tabs', () => {
-    const ws = createWorkspace(['Question 1', 'Question 2'], true)
-    expect(ws.docs.map((d) => d.name)).toEqual(['Question 1', 'Question 2'])
-    expect(ws.docs.every((d) => d.sql === '')).toBe(true)
+  it('creates an empty workspace', () => {
+    const ws = createWorkspace(true)
+    expect(ws.sql).toBe('')
     expect(ws.dbName).toBe(`krash-${ws.sessionId}-1`)
-    expect(createWorkspace(['A'], false).dbName).toBeNull()
+    expect(createWorkspace(false).dbName).toBeNull()
   })
 
   it('saves and reloads', () => {
     const storage = new MemoryStorage()
     const states: SaveState[] = []
     const saver = new WorkspaceSaver(storage, (s) => states.push(s), 0)
-    const ws = createWorkspace(['Q'], true)
-    ws.docs[0]!.sql = 'select 1;'
+    const ws = { ...createWorkspace(true), sql: 'select 1;' }
     saver.schedule(ws)
     expect(saver.flush()).toBe(true)
     expect(states).toEqual(['saving', 'saved'])
@@ -50,7 +48,7 @@ describe('workspace persistence', () => {
     storage.failWrites = true
     const errors: string[] = []
     const saver = new WorkspaceSaver(storage, (s, e) => { if (s === 'failed') errors.push(e ?? '') }, 0)
-    saver.schedule(createWorkspace(['Q'], true))
+    saver.schedule(createWorkspace(true))
     expect(saver.flush()).toBe(false)
     expect(errors[0]).toMatch(/full/)
   })
@@ -58,15 +56,21 @@ describe('workspace persistence', () => {
   it('rejects malformed or tampered state', () => {
     expect(parseWorkspace('{')).toBeNull()
     expect(parseWorkspace(JSON.stringify({ version: 2 }))).toBeNull()
-    const ws = createWorkspace(['Q'], true)
+    const ws = createWorkspace(true)
     expect(parseWorkspace(JSON.stringify({ ...ws, dbName: 'krash-othersession123-1' }))).toBeNull()
     expect(parseWorkspace(JSON.stringify({ ...ws, dbName: '../../x' }))).toBeNull()
-    const fixed = parseWorkspace(JSON.stringify({ ...ws, activeId: 'nope', docs: [{ ...ws.docs[0], name: 'a\u0000b' }] }))
-    expect(fixed?.activeId).toBe(ws.docs[0]!.id)
-    expect(fixed?.docs[0]!.name).toBe('a b')
+    const { sql: _sql, ...noSql } = ws
+    expect(parseWorkspace(JSON.stringify(noSql))).toBeNull()
     const storage = new MemoryStorage()
     storage.setItem(WORKSPACE_KEY, 'garbage')
     expect(loadWorkspace(storage)).toBeNull()
+  })
+
+  it('migrates state from the earlier multi-tab format', () => {
+    const ws = createWorkspace(true)
+    const { sql: _sql, ...rest } = ws
+    const legacy = { ...rest, activeId: 'b', docs: [{ id: 'a', name: 'Q1', sql: 'select 1;' }, { id: 'b', name: 'Q2', sql: 'select 2;' }] }
+    expect(parseWorkspace(JSON.stringify(legacy))?.sql).toBe('select 2;')
   })
 
   it('identifies orphaned databases conservatively', () => {

@@ -1,9 +1,3 @@
-export interface AnswerDoc {
-  id: string
-  name: string
-  sql: string
-}
-
 export type ThemeChoice = 'system' | 'light' | 'dark'
 
 export interface UiPrefs {
@@ -20,7 +14,7 @@ export interface Workspace {
   /** Current PGlite database (generation) for this session; null = memory only. */
   dbName: string | null
   generation: number
-  docs: AnswerDoc[]
-  activeId: string
+  /** The text in the editor. */
+  sql: string
   ui: UiPrefs
 }
