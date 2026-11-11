@@ -384,9 +384,6 @@ main {
   padding: 8px 6px 8px 8px;
   font-size: var(--text-m);
 }
-.schema-tree[aria-busy='true'] {
-  opacity: 0.7;
-}
 .schema-tree summary {
   list-style: none;
   cursor: pointer;
@@ -418,8 +415,35 @@ main {
 .schema-tree summary:hover {
   background: var(--soft);
 }
+.schema-db > summary .tree-name,
 .schema-ns > summary .tree-name {
   font-weight: 650;
+}
+.schema-db-body {
+  padding-left: 14px;
+}
+.tree-db-button {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-s);
+  padding: 4px 6px 4px 16px;
+  font-family: var(--font-mono);
+  font-size: var(--text-m);
+  font-weight: 400;
+  text-align: left;
+}
+.tree-db-button:hover:enabled {
+  background: var(--soft);
+}
+.tree-db-button:hover:enabled .tree-meta {
+  color: var(--accent);
+}
+.tree-db-button:disabled {
+  opacity: 1;
 }
 .tree-meta,
 .tree-kind {

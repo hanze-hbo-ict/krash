@@ -3,14 +3,16 @@
  * Dedicated worker that owns the single PGlite instance of this browser tab.
  * Requests are processed strictly one at a time, in arrival order.
  */
-import { PGlite } from '@electric-sql/pglite'
+import { PGlite, type PGliteOptions } from '@electric-sql/pglite'
 import {
   executeScript,
   hasUserRelations,
   introspectSchema,
+  buildDatabases,
+  listDatabases,
   readDatasetMarker,
   SeedError,
-  seedDatabase,
+  type Reconnect,
 } from './engine'
 import type {
   DatasetSpec,
@@ -27,6 +29,7 @@ declare const self: DedicatedWorkerGlobalScope
 
 let db: PGlite | null = null
 let dbName: string | null = null
+let datasetId = ''
 let busy = false
 let queue: Promise<void> = Promise.resolve()
 
@@ -77,31 +80,72 @@ self.addEventListener('error', (event) => {
   }
 })
 
-async function open(name: string | null): Promise<PGlite> {
-  if (name !== null && typeof indexedDB === 'undefined') {
-    throw new Failure('storage', 'IndexedDB is not available in this browser context.')
-  }
+/** Create a PGlite instance, routing start-up failures that only surface as unhandled rejections. */
+async function createPg(options: PGliteOptions): Promise<PGlite> {
   const startupFailed = new Promise<never>((_, reject) => {
     failStartup = reject
   })
   try {
-    // relaxedDurability stays off: every query waits for the IndexedDB flush.
-    return await Promise.race([PGlite.create(name ? { dataDir: `idb://${name}`, relaxedDurability: false } : {}), startupFailed])
-  } catch (err) {
-    const c = classify(err, 'storage')
-    throw new Failure(c.kind, c.kind === 'wasm' ? c.message : 'The database could not be opened.', String((err as Error)?.message ?? err))
+    return await Promise.race([PGlite.create(options), startupFailed])
   } finally {
     failStartup = null
   }
 }
 
-async function info(instance: PGlite, dataset: DatasetSpec, seeded: boolean, mismatch: string | null, name: string | null): Promise<DbInfo> {
+/** Open the cluster `name` (IndexedDB) or a new in-memory one, connected to `database`. */
+async function open(name: string | null, database = 'postgres'): Promise<PGlite> {
+  if (name !== null && typeof indexedDB === 'undefined') {
+    throw new Failure('storage', 'IndexedDB is not available in this browser context.')
+  }
+  if (name === null && database !== 'postgres') throw new Failure('internal', 'A temporary database can only be reconnected, not reopened.')
+  try {
+    // relaxedDurability stays off: every query waits for the IndexedDB flush.
+    const options: PGliteOptions = name ? { dataDir: `idb://${name}`, relaxedDurability: false } : {}
+    if (database !== 'postgres') options.database = database
+    return await createPg(options)
+  } catch (err) {
+    const c = classify(err, 'storage')
+    throw new Failure(c.kind, c.kind === 'wasm' ? c.message : 'The database could not be opened.', String((err as Error)?.message ?? err))
+  }
+}
+
+/**
+ * Like psql's \c: connect the same cluster to another database. PGlite has one
+ * connection per instance, so the instance is closed and reopened. A temporary
+ * (in-memory) cluster is copied to the new instance first.
+ */
+function reconnectFor(name: string | null): Reconnect {
+  return async (instance, database) => {
+    if (name) {
+      await instance.close()
+      return open(name, database)
+    }
+    const dump = await instance.dumpDataDir('none')
+    await instance.close()
+    return createPg({ loadDataDir: dump, database })
+  }
+}
+
+async function currentDatabase(instance: PGlite): Promise<string> {
+  return (await instance.query<{ d: string }>(`select current_database() as d`)).rows[0]?.d ?? 'postgres'
+}
+
+async function info(
+  instance: PGlite,
+  datasetIdValue: string,
+  seeded: boolean,
+  mismatch: string | null,
+  name: string | null,
+  databases: string[] | null,
+): Promise<DbInfo> {
   const res = await instance.query<{ v: string; sv: string }>(`select version() as v, current_setting('server_version') as sv`)
   const v = res.rows[0]?.v ?? ''
   return {
     postgresVersion: res.rows[0]?.sv ?? 'unknown',
     pgliteVersion: /PGlite ([\d.]+)/.exec(v)?.[1] ?? 'unknown',
-    datasetId: dataset.id,
+    datasetId: datasetIdValue,
+    database: await currentDatabase(instance),
+    databases,
     seeded,
     datasetMismatch: mismatch,
     persistent: name !== null,
@@ -118,27 +162,51 @@ function deleteIdb(name: string): Promise<boolean> {
   })
 }
 
-/** Open (or create) `name`, seeding it only if it is brand new. */
-async function openSeeded(name: string | null, dataset: DatasetSpec, allowReuse: boolean): Promise<{ instance: PGlite; info: DbInfo }> {
-  const instance = await open(name)
+/** Build the dataset on a brand-new cluster that `instance` is connected to (as postgres). */
+async function build(instance: PGlite, name: string | null, dataset: DatasetSpec): Promise<{ instance: PGlite; info: DbInfo }> {
   try {
-    const marker = await readDatasetMarker(instance)
-    if (allowReuse && marker === dataset.id) {
-      return { instance, info: await info(instance, dataset, false, null, name) }
-    }
-    if (marker === null && !(await hasUserRelations(instance))) {
-      await seedDatabase(instance, dataset.sql, dataset.id, dataset.expectedTables)
-      return { instance, info: await info(instance, dataset, true, null, name) }
-    }
-    // An existing database from another dataset (or a half-loaded one). Never
-    // destroy it silently; the UI offers an explicit reset.
-    return { instance, info: await info(instance, dataset, false, marker ?? 'unknown', name) }
+    const result = await buildDatabases(instance, dataset, reconnectFor(name))
+    return { instance: result.db, info: await info(result.db, dataset.id, true, null, name, result.databases) }
   } catch (err) {
-    await instance.close().catch(() => {})
-    // A brand-new database that failed to seed is useless; remove it.
+    // A brand-new cluster that failed to load is useless; remove it.
     if (name && err instanceof SeedError) await deleteIdb(name)
     throw err
   }
+}
+
+async function isEmptyCluster(instance: PGlite): Promise<boolean> {
+  return (
+    (await readDatasetMarker(instance)) === null &&
+    (await listDatabases(instance)).length === 1 &&
+    !(await hasUserRelations(instance))
+  )
+}
+
+/**
+ * Reopen `name` connected to `connectTo` (falling back to postgres if that
+ * database no longer exists), or build the dataset if the cluster is new.
+ */
+async function openOrBuild(name: string | null, dataset: DatasetSpec, connectTo: string | null): Promise<{ instance: PGlite; info: DbInfo }> {
+  if (name === null) return build(await open(null), null, dataset)
+  let instance: PGlite
+  try {
+    instance = await open(name, connectTo ?? 'postgres')
+  } catch (err) {
+    if (!connectTo || connectTo === 'postgres') throw err
+    instance = await open(name, 'postgres')
+  }
+  try {
+    const marker = await readDatasetMarker(instance)
+    if (marker === dataset.id) return { instance, info: await info(instance, dataset.id, false, null, name, null) }
+    if (!(await isEmptyCluster(instance))) {
+      // Another dataset (or a half-loaded one). Never destroy it silently; Reset is explicit.
+      return { instance, info: await info(instance, dataset.id, false, marker ?? 'unknown', name, null) }
+    }
+  } catch (err) {
+    await instance.close().catch(() => {})
+    throw err
+  }
+  return build(instance, name, dataset)
 }
 
 async function handle(req: DbRequest): Promise<unknown> {
@@ -148,24 +216,43 @@ async function handle(req: DbRequest): Promise<unknown> {
     case 'init': {
       if (db) await db.close().catch(() => {})
       db = null
-      const { instance, info } = await openSeeded(req.dbName, req.dataset, true)
+      const { instance, info } = await openOrBuild(req.dbName, req.dataset, req.database)
       db = instance
       dbName = req.dbName
+      datasetId = req.dataset.id
       return info
     }
     case 'createFresh': {
-      // Build and validate the new database first; swap only on success.
+      // Build and validate the new cluster first; swap only on success.
       if (req.dbName !== null && req.dbName === dbName) throw new Failure('internal', 'A fresh database needs a new name.')
-      const { instance, info } = await openSeeded(req.dbName, req.dataset, false)
-      if (info.datasetMismatch !== null) {
-        await instance.close().catch(() => {})
+      const fresh = await open(req.dbName)
+      if (!(await isEmptyCluster(fresh).catch(() => false))) {
+        await fresh.close().catch(() => {})
         throw new Failure('seed', 'The new database was not empty; it was not used.')
       }
+      const { instance, info } = await build(fresh, req.dbName, req.dataset)
       const old = db
       db = instance
       dbName = req.dbName
+      datasetId = req.dataset.id
       if (old) await old.close().catch(() => {})
       return info
+    }
+    case 'connect': {
+      const instance = requireDb()
+      const previous = await currentDatabase(instance)
+      if (!(await listDatabases(instance)).includes(req.database)) {
+        throw new Failure('internal', `The database “${req.database}” does not exist.`)
+      }
+      db = null
+      try {
+        db = await reconnectFor(dbName)(instance, req.database)
+      } catch (err) {
+        // Try to get back to where we were (only possible with persistent storage).
+        if (dbName) db = await open(dbName, previous).catch(() => null)
+        throw err
+      }
+      return info(db, datasetId, false, null, dbName, null)
     }
     case 'dropDatabase': {
       if (req.dbName === dbName) throw new Failure('internal', 'Refusing to delete the database that is in use.')

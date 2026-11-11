@@ -41,8 +41,15 @@ export function createWorkspace(persistent: boolean, ui: UiPrefs = DEFAULT_UI): 
     dbName: persistent ? dbNameFor(sessionId, 1) : null,
     generation: 1,
     sql: '',
+    database: 'postgres',
+    databases: ['postgres'],
     ui: { ...ui },
   }
+}
+
+/** PostgreSQL identifiers are at most 63 bytes; anything else is not a database name we wrote. */
+function isDbName(v: unknown): v is string {
+  return typeof v === 'string' && v.length > 0 && new TextEncoder().encode(v).length <= 63
 }
 
 function isObj(v: unknown): v is Record<string, unknown> {
@@ -82,6 +89,8 @@ export function parseWorkspace(raw: string | null): Workspace | null {
     dbName,
     generation,
     sql: sql.slice(0, MAX_SQL_LENGTH),
+    database: typeof v.database === 'string' && isDbName(v.database) ? v.database : 'postgres',
+    databases: Array.isArray(v.databases) && v.databases.every(isDbName) && v.databases.length > 0 ? (v.databases as string[]).slice(0, 100) : ['postgres'],
     ui: {
       sidebarCollapsed: typeof ui.sidebarCollapsed === 'boolean' ? ui.sidebarCollapsed : DEFAULT_UI.sidebarCollapsed,
       editorFraction:

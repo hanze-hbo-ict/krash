@@ -92,10 +92,22 @@ export interface SchemaNamespace {
   relations: SchemaRelation[]
 }
 
+export interface SchemaInfo {
+  /** The database this session is connected to. */
+  database: string
+  /** Every non-template database of the cluster (the UI decides which to show). */
+  allDatabases: string[]
+  namespaces: SchemaNamespace[]
+}
+
 export interface DbInfo {
   postgresVersion: string
   pgliteVersion: string
   datasetId: string
+  /** The database the session is connected to. */
+  database: string
+  /** Set when the dataset was (re)built now: the databases it touched. Null when reused. */
+  databases: string[] | null
   /** True if the database was (re)seeded during this init. */
   seeded: boolean
   /** Set when an existing database was found but carried another dataset marker. */
@@ -120,11 +132,12 @@ export interface DatasetSpec {
 }
 
 export type DbRequest =
-  | { type: 'init'; dbName: string | null; dataset: DatasetSpec }
+  | { type: 'init'; dbName: string | null; dataset: DatasetSpec; database: string | null }
   | { type: 'execute'; sql: string; maxRows: number }
   | { type: 'getSchema' }
   | { type: 'createFresh'; dbName: string | null; dataset: DatasetSpec }
   | { type: 'dropDatabase'; dbName: string }
+  | { type: 'connect'; database: string }
   | { type: 'close' }
   | { type: 'health' }
 
@@ -133,9 +146,10 @@ export type DbRequestType = DbRequest['type']
 export interface DbResponseMap {
   init: DbInfo
   execute: ExecuteOutcome
-  getSchema: SchemaNamespace[]
+  getSchema: SchemaInfo
   createFresh: DbInfo
   dropDatabase: { dropped: boolean }
+  connect: DbInfo
   close: { closed: true }
   health: { state: 'ready' | 'busy' | 'uninitialized' }
 }

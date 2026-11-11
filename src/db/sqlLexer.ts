@@ -1,11 +1,11 @@
 /**
- * A deliberately tiny PostgreSQL *lexer* used for exactly one safety check:
- * detecting `COPY ... FROM STDIN`, which hangs/aborts the embedded PGlite
- * engine (there is no client to stream data from).
- *
- * It does NOT split statements for execution — the whole script is always sent
- * to PostgreSQL unchanged. It only needs to know which words are real keywords
- * (not inside strings, quoted identifiers, comments or dollar-quoted bodies).
+ * A deliberately tiny PostgreSQL *lexer*. It knows which words are real keywords
+ * (not inside strings, quoted identifiers, comments or dollar-quoted bodies) and
+ * where top-level statements end. It is used for two things only:
+ *  - refusing `COPY ... FROM STDIN`, which hangs/aborts the embedded engine;
+ *  - splitting an imported script at its `CREATE DATABASE` statements, so each
+ *    section can run connected to its own database (like psql's `\c`).
+ * A Run from the editor is always sent to PostgreSQL unchanged, as one script.
  */
 
 export interface Word {
@@ -13,9 +13,24 @@ export interface Word {
   start: number
 }
 
+export interface Statement {
+  words: Word[]
+  /** Offset of the statement's first character (just after the previous `;`). */
+  start: number
+  /** Offset just after the terminating `;` (or the end of the text). */
+  end: number
+}
+
 /** Yields top-level statements as lists of bare words. */
 export function lexWords(sql: string): Word[][] {
-  const statements: Word[][] = [[]]
+  return lexStatements(sql)
+    .map((s) => s.words)
+    .filter((w) => w.length > 0)
+}
+
+/** Top-level statements with their text range; includes empty/comment-only ones. */
+export function lexStatements(sql: string): Statement[] {
+  const statements: Statement[] = [{ words: [], start: 0, end: sql.length }]
   const n = sql.length
   let i = 0
   const cur = () => statements[statements.length - 1]!
@@ -73,15 +88,52 @@ export function lexWords(sql: string): Word[][] {
         i = close < 0 ? n : close + tag.length
       } else i++
     } else if (ch === ';') {
-      statements.push([])
+      cur().end = i + 1
+      statements.push({ words: [], start: i + 1, end: n })
       i++
     } else if (/[A-Za-z_\u0080-￿]/.test(ch)) {
       const start = i
       while (i < n && /[A-Za-z0-9_$\u0080-￿]/.test(sql[i]!)) i++
-      cur().push({ text: sql.slice(start, i).toLowerCase(), start })
+      cur().words.push({ text: sql.slice(start, i).toLowerCase(), start })
     } else i++
   }
-  return statements.filter((s) => s.length > 0)
+  return statements
+}
+
+export interface ScriptSection {
+  /** The `CREATE DATABASE …;` statement that starts this section; null for the part before the first one. */
+  createDatabase: string | null
+  /** The statements that follow, up to the next `CREATE DATABASE`, as written. */
+  body: string
+  /** False if the body contains no statements (only whitespace or comments). */
+  hasStatements: boolean
+}
+
+/**
+ * Splits an imported script at top-level `CREATE DATABASE` statements.
+ * The first section is what comes before the first `CREATE DATABASE` (it runs
+ * in the `postgres` database); every following section runs in the database
+ * its statement created.
+ */
+export function splitByCreateDatabase(sql: string): ScriptSection[] {
+  const sections: ScriptSection[] = []
+  let current: { createDatabase: string | null; bodyStart: number; hasStatements: boolean } = {
+    createDatabase: null,
+    bodyStart: 0,
+    hasStatements: false,
+  }
+  const close = (bodyEnd: number) =>
+    sections.push({ createDatabase: current.createDatabase, body: sql.slice(current.bodyStart, bodyEnd), hasStatements: current.hasStatements })
+  for (const st of lexStatements(sql)) {
+    if (st.words[0]?.text === 'create' && st.words[1]?.text === 'database') {
+      close(st.words[0].start)
+      current = { createDatabase: sql.slice(st.words[0].start, st.end), bodyStart: st.end, hasStatements: false }
+    } else if (st.words.length > 0) {
+      current.hasStatements = true
+    }
+  }
+  close(sql.length)
+  return sections
 }
 
 /** Returns the offset of a `COPY ... FROM STDIN` statement, or null. */

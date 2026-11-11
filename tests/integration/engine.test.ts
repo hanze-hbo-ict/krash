@@ -2,12 +2,14 @@ import { PGlite } from '@electric-sql/pglite'
 import { readFileSync } from 'node:fs'
 import { beforeAll, describe, expect, it } from 'vitest'
 import {
+  buildDatabases,
   executeScript,
   hasUserRelations,
   introspectSchema,
+  listDatabases,
   readDatasetMarker,
   SeedError,
-  seedDatabase,
+  type Reconnect,
 } from '../../src/db/engine'
 
 const seedSql = readFileSync(new URL('../fixtures/webshop.sql', import.meta.url), 'utf8')
@@ -15,11 +17,24 @@ const expected = ['categories', 'products', 'customers', 'employees', 'orders', 
 
 let db: PGlite
 
+/** The in-memory equivalent of psql's \c, as the worker does for temporary databases. */
+const reconnect: Reconnect = async (conn, database) => {
+  const dump = await conn.dumpDataDir('none')
+  await conn.close()
+  return PGlite.create({ loadDataDir: dump, database })
+}
+
+async function build(sql: string, expectedTables: string[] = []) {
+  return buildDatabases(await PGlite.create(), { id: 'test', sql, expectedTables }, reconnect)
+}
+
 beforeAll(async () => {
-  db = await PGlite.create()
-  expect(await hasUserRelations(db)).toBe(false)
-  expect(await readDatasetMarker(db)).toBeNull()
-  await seedDatabase(db, seedSql, 'webshop-v1', expected)
+  const fresh = await PGlite.create()
+  expect(await hasUserRelations(fresh)).toBe(false)
+  expect(await readDatasetMarker(fresh)).toBeNull()
+  const result = await buildDatabases(fresh, { id: 'webshop-v1', sql: seedSql, expectedTables: expected }, reconnect)
+  expect(result).toMatchObject({ database: 'postgres', databases: ['postgres'] })
+  db = result.db
 })
 
 describe('seeding', () => {
@@ -41,10 +56,50 @@ describe('seeding', () => {
   })
 
   it('refuses a broken seed', async () => {
-    const fresh = await PGlite.create()
-    await expect(seedDatabase(fresh, 'create table a(x int); insert into a values (1/0);', 'x')).rejects.toBeInstanceOf(SeedError)
-    await expect(seedDatabase(fresh, 'create table b(x int);', 'x', ['missing_table'])).rejects.toThrow(/missing expected tables/)
-    await fresh.close()
+    await expect(build('create table a(x int); insert into a values (1/0);')).rejects.toBeInstanceOf(SeedError)
+    await expect(build('create table b(x int);', ['missing_table'])).rejects.toThrow(/missing expected tables/)
+    await expect(build('create database shop; create table c(x int); select 1/0;')).rejects.toThrow(/\(in shop\): division by zero/)
+  })
+})
+
+describe('import scripts with CREATE DATABASE', () => {
+  it('runs each section in the database it created and ends connected to the last one', { timeout: 120_000 }, async () => {
+    const result = await build(`
+      -- roles are cluster-wide
+      create role clerk;
+      create database shop;
+      create table products (id int primary key, name text);
+      insert into products values (1, 'pen');
+      grant connect on database shop to clerk;
+      grant select on products to clerk;
+      CREATE DATABASE archive;
+      create table old_orders (id int);
+    `)
+    expect(result.database).toBe('archive')
+    expect(result.databases).toEqual(['postgres', 'shop', 'archive'])
+    let conn = result.db
+    expect((await introspectSchema(conn)).namespaces[0]!.relations.map((r) => r.name)).toEqual(['old_orders'])
+    expect(await listDatabases(conn)).toEqual(['archive', 'postgres', 'shop'])
+    // The marker is readable from any database.
+    expect(await readDatasetMarker(conn)).toBe('test')
+    conn = await reconnect(conn, 'shop')
+    const shop = await introspectSchema(conn)
+    expect(shop.database).toBe('shop')
+    expect(shop.namespaces[0]!.relations.map((r) => r.name)).toEqual(['products'])
+    const acl = await executeScript(conn, `select has_table_privilege('clerk', 'products', 'select'), has_database_privilege('clerk', 'shop', 'connect')`)
+    expect(acl.results[0]!.rows[0]).toEqual(['t', 't'])
+    await conn.close()
+  })
+
+  it('does not touch postgres when the script starts with CREATE DATABASE', { timeout: 120_000 }, async () => {
+    const result = await build('-- a comment first\ncreate database shop;\ncreate table t (x int);')
+    expect(result).toMatchObject({ database: 'shop', databases: ['shop'] })
+    await result.db.close()
+  })
+
+  it('rejects CREATE DATABASE combined with other statements in one editor run (PostgreSQL rule)', async () => {
+    const out = await executeScript(db, 'select 1; create database nope;')
+    expect(out.error?.message).toMatch(/cannot run inside a transaction block/)
   })
 })
 
@@ -197,9 +252,22 @@ describe('execution', () => {
 })
 
 describe('schema introspection', () => {
+  it('lists databases created with CREATE DATABASE, and database grants work', async () => {
+    const out = await executeScript(db, 'create role reader; grant connect on database postgres to reader;')
+    expect(out.error).toBeNull()
+    expect((await executeScript(db, 'create database archive;')).error).toBeNull()
+    const info = await introspectSchema(db)
+    expect(info.database).toBe('postgres')
+    expect(info.allDatabases).toEqual(['archive', 'postgres'])
+    await executeScript(db, 'drop database archive;')
+  })
+
+
   it('lists schemas, tables, views, columns, keys and references', async () => {
     await executeScript(db, `create schema exam; create table exam.t (id int primary key, cust int references public.customers(id));`)
-    const schema = await introspectSchema(db)
+    const info = await introspectSchema(db)
+    expect(info.allDatabases).toEqual(['postgres'])
+    const schema = info.namespaces
     expect(schema.map((s) => s.name)).toEqual(['public', 'exam'])
     const pub = schema[0]!
     const orders = pub.relations.find((r) => r.name === 'orders')!

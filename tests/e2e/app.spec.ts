@@ -211,6 +211,64 @@ test.describe('Krash', () => {
     await expect(page.locator('.schema-tree').getByText('ok_t', { exact: true })).toHaveCount(0)
   })
 
+  test('import with CREATE DATABASE: one section per database, switching, and reload', async ({ page }) => {
+    await open(page)
+    const tree = page.locator('.schema-tree')
+    await expect(tree.getByText('postgres', { exact: true })).toBeVisible()
+    const sql = [
+      'create role clerk;',
+      'create database shop;',
+      'create table products (id int primary key, name text);',
+      "insert into products values (1, 'pen');",
+      'grant connect on database shop to clerk;',
+      'grant select on products to clerk;',
+      'create database archive;',
+      'create table old_orders (id int);',
+    ].join('\n')
+    await page.getByRole('button', { name: 'Import database' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Import database' })
+    await dialog.locator('textarea').fill(sql)
+    await dialog.getByRole('button', { name: 'Clear database and import' }).click()
+    await expect(dialog).toBeHidden({ timeout: 60_000 })
+    // postgres had a statement (create role), so it is listed; we end in archive.
+    await expect(tree.getByText('database · connected')).toBeVisible()
+    await expect(tree.locator('details.schema-db > summary')).toContainText('archive')
+    await expect(tree.getByText('old_orders', { exact: true })).toBeVisible()
+    await expect(tree.getByRole('button', { name: 'Connect to database shop' })).toBeVisible()
+    await expect(tree.getByRole('button', { name: 'Connect to database postgres' })).toBeVisible()
+
+    await tree.getByRole('button', { name: 'Connect to database shop' }).click()
+    await expect(tree.locator('details.schema-db > summary')).toContainText('shop', { timeout: 60_000 })
+    await expect(tree.getByText('products', { exact: true })).toBeVisible()
+    await setSql(page, "select current_database(), has_table_privilege('clerk', 'products', 'select');")
+    await run(page)
+    await expect(results(page).locator('tbody tr').first()).toContainText('shop')
+
+    await page.waitForTimeout(600)
+    await page.reload()
+    await expect(page.locator('.db-status')).toHaveText('Ready', { timeout: 60_000 })
+    await expect(tree.locator('details.schema-db > summary')).toContainText('shop')
+
+    // A database created from the editor appears and can be connected to.
+    await setSql(page, 'create database scratch;')
+    await run(page)
+    await expect(tree.getByRole('button', { name: 'Connect to database scratch' })).toBeVisible()
+  })
+
+  test('a script that starts with CREATE DATABASE does not show postgres or offer switching', async ({ page }) => {
+    await open(page)
+    await page.getByRole('button', { name: 'Import database' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Import database' })
+    await dialog.locator('textarea').fill('create database shop;\ncreate table products (id int);')
+    await dialog.getByRole('button', { name: 'Clear database and import' }).click()
+    await expect(dialog).toBeHidden({ timeout: 60_000 })
+    const tree = page.locator('.schema-tree')
+    await expect(tree.locator('details.schema-db > summary')).toHaveText(/shop\s*database$/)
+    await expect(tree.getByText('postgres', { exact: true })).toHaveCount(0)
+    await expect(tree.getByRole('button', { name: /Connect to database/ })).toHaveCount(0)
+    await expect(tree.getByText('products', { exact: true })).toBeVisible()
+  })
+
   test('11: huge results are bounded with an explicit notice', async ({ page }) => {
     await open(page)
     await setSql(page, 'select g, md5(g::text) from generate_series(1, 1000000) g;')

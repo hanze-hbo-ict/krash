@@ -47,7 +47,7 @@ test('the worker can be terminated mid-query and the database reopened', async (
     return new Promise<string>((resolve) => setTimeout(() => { window.spike.client.stop(); p.then(resolve) }, 1500))
   })
   expect(started).toBe('rejected:cancelled')
-  const info = await page.evaluate(() => window.spike.client.request({ type: 'init', dbName: window.spike.dbName, dataset: { id: 'default-v1', sql: '', expectedTables: [] } }))
+  const info = await page.evaluate(() => window.spike.client.request({ type: 'init', dbName: window.spike.dbName, dataset: { id: 'default-v1', sql: '', expectedTables: [] }, database: null }))
   expect(info).toMatchObject({ seeded: false })
   const out = (await page.evaluate(() => window.spike.run('select v from keep'))) as Outcome
   expect(out.results[0]!.rows).toEqual([['committed']])

@@ -3,9 +3,9 @@
  * it can be integration-tested in Node with an in-memory database.
  */
 import { protocol, type PGlite } from '@electric-sql/pglite'
-import type { ExecuteOutcome, SchemaColumn, SchemaNamespace, SchemaRelation } from './protocol'
+import type { DatasetSpec, ExecuteOutcome, SchemaColumn, SchemaInfo, SchemaRelation } from './protocol'
 import { DEFAULT_LIMITS, WireReader, type WireLimits } from './wire'
-import { findCopyFromStdin } from './sqlLexer'
+import { findCopyFromStdin, splitByCreateDatabase } from './sqlLexer'
 
 export const DATASET_MARKER_PREFIX = 'krash-dataset:'
 
@@ -143,7 +143,9 @@ const KIND: Record<string, SchemaRelation['kind']> = {
   f: 'foreign table',
 }
 
-export async function introspectSchema(db: PGlite): Promise<SchemaNamespace[]> {
+export async function introspectSchema(db: PGlite): Promise<SchemaInfo> {
+  const current = await db.query<{ d: string }>(`select current_database() as d`)
+  const allDatabases = await listDatabases(db)
   const nsRes = await db.query<{ schema: string }>(NAMESPACES_SQL)
   const res = await db.query<{
     schema: string
@@ -173,12 +175,26 @@ export async function introspectSchema(db: PGlite): Promise<SchemaNamespace[]> {
       rel.columns.push(col)
     }
   }
-  return [...byNs].map(([name, rels]) => ({ name, relations: [...rels.values()] }))
+  return {
+    database: current.rows[0]?.d ?? '',
+    allDatabases,
+    namespaces: [...byNs].map(([name, rels]) => ({ name, relations: [...rels.values()] })),
+  }
 }
 
+/** All non-template databases of the cluster, by name. */
+export async function listDatabases(db: PGlite): Promise<string[]> {
+  const res = await db.query<{ d: string }>(`select datname::text as d from pg_database where not datistemplate order by 1`)
+  return res.rows.map((r) => r.d)
+}
+
+/**
+ * The dataset marker is a comment on the `postgres` database: database comments
+ * are cluster-wide, so it can be read whichever database we are connected to.
+ */
 export async function readDatasetMarker(db: PGlite): Promise<string | null> {
   const res = await db.query<{ d: string | null }>(
-    `select shobj_description(oid, 'pg_database') as d from pg_database where datname = current_database()`,
+    `select shobj_description(oid, 'pg_database') as d from pg_database where datname = 'postgres'`,
   )
   const d = res.rows[0]?.d ?? null
   return d && d.startsWith(DATASET_MARKER_PREFIX) ? d.slice(DATASET_MARKER_PREFIX.length) : null
@@ -194,39 +210,69 @@ export async function hasUserRelations(db: PGlite): Promise<boolean> {
 
 export class SeedError extends Error {}
 
-/**
- * Apply the seed script and stamp the dataset marker. The caller is expected to
- * run this only on a brand-new database and discard that database on failure.
- */
-export async function seedDatabase(
-  db: PGlite,
-  seedSql: string,
-  datasetId: string,
-  expectedTables: string[] = [],
-): Promise<void> {
-  const outcome = await executeScript(db, seedSql, { maxRows: 0, maxResults: 0, maxNotices: 0 })
-  if (outcome.error) {
-    throw new SeedError(`The dataset could not be loaded: ${outcome.error.message}`)
-  }
+/** Reconnects the same cluster to another database; closes `db` and returns the new connection. */
+export type Reconnect = (db: PGlite, database: string) => Promise<PGlite>
+
+export interface BuildResult {
+  /** The open connection, to the database the script ended in. */
+  db: PGlite
+  database: string
+  /** Databases the script ran statements in or created, in script order. */
+  databases: string[]
+}
+
+async function runPart(db: PGlite, sql: string, where: string): Promise<void> {
+  const outcome = await executeScript(db, sql, { maxRows: 0, maxResults: 0, maxNotices: 0 })
+  if (outcome.error) throw new SeedError(`The dataset could not be loaded${where}: ${outcome.error.message}`)
   if (outcome.txStatus !== 'I') {
     await db.exec('rollback')
-    throw new SeedError('The dataset script left a transaction open.')
+    throw new SeedError(`The dataset script left a transaction open${where}.`)
   }
-  if (expectedTables.length > 0) {
-    const res = await db.query<{ t: string }>(`select t from unnest($1::text[]) as t where to_regclass(t) is null`, [
-      expectedTables,
-    ])
-    if (res.rows.length > 0) {
-      throw new SeedError(`The dataset is missing expected tables: ${res.rows.map((r) => r.t).join(', ')}`)
+}
+
+/**
+ * Build a dataset on a brand-new cluster, connected to `postgres`. Like
+ * `psql -f` with a `\c` after every `CREATE DATABASE`: statements before the
+ * first `CREATE DATABASE` run in `postgres`; each `CREATE DATABASE` runs on its
+ * own, after which the following statements run in the new database.
+ * On failure the current connection is closed and a SeedError is thrown; the
+ * caller discards the cluster.
+ */
+export async function buildDatabases(db: PGlite, dataset: DatasetSpec, reconnect: Reconnect): Promise<BuildResult> {
+  let conn = db
+  try {
+    const sections = splitByCreateDatabase(dataset.sql)
+    const databases: string[] = []
+    let current = 'postgres'
+    for (const section of sections) {
+      if (section.createDatabase !== null) {
+        const before = new Set(await listDatabases(conn))
+        await runPart(conn, section.createDatabase, current === 'postgres' ? '' : ` (in ${current})`)
+        const created = (await listDatabases(conn)).filter((d) => !before.has(d))
+        if (created.length !== 1) throw new SeedError('A CREATE DATABASE statement did not create exactly one database.')
+        current = created[0]!
+        conn = await reconnect(conn, current)
+        databases.push(current)
+      } else if (section.hasStatements || sections.length === 1) {
+        databases.push('postgres')
+      }
+      if (section.hasStatements) await runPart(conn, section.body, current === 'postgres' ? '' : ` (in ${current})`)
     }
+    if (dataset.expectedTables.length > 0) {
+      const res = await conn.query<{ t: string }>(`select t from unnest($1::text[]) as t where to_regclass(t) is null`, [
+        dataset.expectedTables,
+      ])
+      if (res.rows.length > 0) {
+        throw new SeedError(`The dataset is missing expected tables: ${res.rows.map((r) => r.t).join(', ')}`)
+      }
+    }
+    await conn.exec(`comment on database postgres is ${quoteLiteral(DATASET_MARKER_PREFIX + dataset.id)}`)
+    if ((await readDatasetMarker(conn)) !== dataset.id) throw new SeedError('The dataset marker could not be verified after loading.')
+    return { db: conn, database: current, databases }
+  } catch (err) {
+    await conn.close().catch(() => {})
+    throw err
   }
-  await db.exec(
-    `do $krash$ begin execute format('comment on database %I is %L', current_database(), ${quoteLiteral(
-      DATASET_MARKER_PREFIX + datasetId,
-    )}); end $krash$`,
-  )
-  const marker = await readDatasetMarker(db)
-  if (marker !== datasetId) throw new SeedError('The dataset marker could not be verified after loading.')
 }
 
 export function quoteIdent(name: string): string {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { findCopyFromStdin, lexWords, offsetToLineCol, pgPositionToOffset } from '../../src/db/sqlLexer'
+import { findCopyFromStdin, lexWords, offsetToLineCol, pgPositionToOffset, splitByCreateDatabase } from '../../src/db/sqlLexer'
 
 describe('findCopyFromStdin', () => {
   it('detects COPY ... FROM STDIN in any case', () => {
@@ -37,5 +37,29 @@ describe('positions', () => {
   it('computes 1-based line and column', () => {
     expect(offsetToLineCol('a\nbc\ndef', 6)).toEqual({ line: 3, col: 2 })
     expect(offsetToLineCol('abc', 0)).toEqual({ line: 1, col: 1 })
+  })
+})
+
+describe('splitByCreateDatabase', () => {
+  it('returns one postgres section when there is no CREATE DATABASE', () => {
+    const s = splitByCreateDatabase('create table t (x int);\n-- note\ninsert into t values (1);')
+    expect(s).toEqual([{ createDatabase: null, body: 'create table t (x int);\n-- note\ninsert into t values (1);', hasStatements: true }])
+  })
+
+  it('splits at each top-level CREATE DATABASE, keeping text as written', () => {
+    const sql = "-- setup\ncreate role clerk;\nCREATE DATABASE shop;\ncreate table p (id int);\ncreate database \"Archive\" with encoding 'UTF8';\ncreate table old (x text);\n"
+    const s = splitByCreateDatabase(sql)
+    expect(s.map((x) => x.createDatabase)).toEqual([null, 'CREATE DATABASE shop;', 'create database "Archive" with encoding \'UTF8\';'])
+    expect(s[0]).toMatchObject({ body: '-- setup\ncreate role clerk;\n', hasStatements: true })
+    expect(s[1]).toMatchObject({ body: '\ncreate table p (id int);\n', hasStatements: true })
+    expect(s[2]).toMatchObject({ body: '\ncreate table old (x text);\n', hasStatements: true })
+  })
+
+  it('marks an empty preamble and ignores CREATE DATABASE inside strings, comments and bodies', () => {
+    const sql = "-- only a comment\ncreate database shop;\nselect 'create database x;';\n/* create database y; */\ncreate function f() returns void language sql as $$ select 1; $$;"
+    const s = splitByCreateDatabase(sql)
+    expect(s).toHaveLength(2)
+    expect(s[0]!.hasStatements).toBe(false)
+    expect(s[1]!.createDatabase).toBe('create database shop;')
   })
 })

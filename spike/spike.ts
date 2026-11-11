@@ -19,7 +19,7 @@ declare global {
   }
 }
 const t0 = performance.now()
-const ready = client.request({ type: 'init', dbName, dataset }).then((info) => {
+const ready = client.request({ type: 'init', dbName, dataset, database: null }).then((info) => {
   log.textContent = `ready in ${Math.round(performance.now() - t0)} ms\n${JSON.stringify(info, null, 2)}`
   return info
 }, (err) => {

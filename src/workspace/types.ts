@@ -16,5 +16,12 @@ export interface Workspace {
   generation: number
   /** The text in the editor. */
   sql: string
+  /** The PostgreSQL database this session is connected to. */
+  database: string
+  /**
+   * Databases shown in the Database pane: those the base script touched, plus
+   * those created from the editor. Switching is possible between these.
+   */
+  databases: string[]
   ui: UiPrefs
 }

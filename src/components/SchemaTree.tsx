@@ -1,14 +1,20 @@
 /**
- * Read-only schema explorer: schemas → tables/views → columns with types and
- * key markers. Built from native <details>/<summary> for keyboard support.
- * No inline editing, no generated queries.
+ * Read-only schema explorer: databases → schemas → tables/views → columns with
+ * types and key markers. Only the connected database can be inspected (one
+ * connection); clicking another listed database connects to it, like psql's \c.
+ * Built from native <details>/<summary> for keyboard support. No inline
+ * editing, no generated queries.
  */
 import { useState } from 'react'
-import type { SchemaNamespace, SchemaRelation } from '../db/protocol'
+import type { SchemaInfo, SchemaRelation } from '../db/protocol'
 
 interface Props {
-  schema: SchemaNamespace[] | null
+  schema: SchemaInfo | null
+  /** Databases to list (the connected one is always included). */
+  databases: string[]
   stale: boolean
+  /** Connect to another database; absent while switching is not possible. */
+  onConnect?: (database: string) => void
   /** The database failed to start. */
   unavailable?: boolean
 }
@@ -21,7 +27,7 @@ const KIND_LABEL: Record<SchemaRelation['kind'], string> = {
   'foreign table': 'foreign',
 }
 
-export function SchemaTree({ schema, stale, unavailable }: Props) {
+export function SchemaTree({ schema, databases, stale, unavailable, onConnect }: Props) {
   // Expanded state survives schema refreshes; schemas start open, tables closed.
   const [open, setOpen] = useState<Record<string, boolean>>({})
   const isOpen = (key: string, dflt: boolean) => open[key] ?? dflt
@@ -29,9 +35,57 @@ export function SchemaTree({ schema, stale, unavailable }: Props) {
 
   if (!schema) return <p className="schema-empty">{unavailable ? 'The database is not available.' : 'Waiting for the database…'}</p>
 
+  const shown = databases.includes(schema.database) ? databases : [...databases, schema.database]
+  const namespaces = <Namespaces schema={schema} isOpen={isOpen} toggle={toggle} />
+
   return (
     <div className="schema-tree" aria-busy={stale || undefined}>
-      {schema.map((ns) => {
+      {shown.map((name) =>
+        name !== schema.database ? (
+          <div key={name} className="schema-db schema-db-other">
+            <button
+              type="button"
+              className="tree-db-button"
+              disabled={!onConnect}
+              onClick={() => onConnect?.(name)}
+              title={`Connect to ${name}`}
+              aria-label={`Connect to database ${name}`}
+            >
+              <span className="tree-name">{name}</span>
+              <span className="tree-meta">connect</span>
+            </button>
+          </div>
+        ) : (
+          <details
+            key={name}
+            className="schema-db"
+            open={isOpen(`db:${name}`, true)}
+            onToggle={(e) => toggle(`db:${name}`, (e.currentTarget as HTMLDetailsElement).open)}
+          >
+            <summary>
+              <span className="tree-name">{name}</span>
+              <span className="tree-meta">{shown.length > 1 ? 'database · connected' : 'database'}</span>
+            </summary>
+            <div className="schema-db-body">{namespaces}</div>
+          </details>
+        ),
+      )}
+    </div>
+  )
+}
+
+function Namespaces({
+  schema,
+  isOpen,
+  toggle,
+}: {
+  schema: SchemaInfo
+  isOpen: (key: string, dflt: boolean) => boolean
+  toggle: (key: string, value: boolean) => void
+}) {
+  return (
+    <>
+      {schema.namespaces.map((ns) => {
         const nsKey = ns.name
         return (
           <details
@@ -91,6 +145,6 @@ export function SchemaTree({ schema, stale, unavailable }: Props) {
           </details>
         )
       })}
-    </div>
+    </>
   )
 }

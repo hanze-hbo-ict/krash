@@ -34,13 +34,24 @@ KRASH_E2E_DEV=1 npx playwright test tests/e2e/spike.spec.ts   # PGlite spike, ag
 ## Using Krash
 
 - **One query editor.** Keep several statements in it and run them one at a time by selecting them.
-- **Run.** Ctrl/⌘ + Enter or **Run** runs the selection, or the whole tab if nothing is selected.
-- **Database pane.** A read-only schema tree, plus three actions in its header:
+- **Run.** Ctrl/⌘ + Enter or **Run** runs the selection, or the whole query if nothing is selected.
+- **Database pane.** A read-only tree of databases, schemas, tables and columns, plus three actions in its header:
   - **Reset** restores the last imported database. Until something is imported, that is the default database.
   - **Clear** clears the whole workspace: it deletes the query and this tab's database and starts fresh with the default
     database.
   - **Import** takes a pasted SQL script: the current database is cleared and the script is run on an empty database.
 - **Default database.** It is deliberately tiny: one table, `people`, with three rows (`src/db/default.sql`). Import a script to replace it.
+- **Databases in an import.** An import script can define its own databases, as with `psql -f` and a `\c` after every
+  `CREATE DATABASE`:
+  - statements before the first `CREATE DATABASE` run in `postgres`;
+  - each `CREATE DATABASE name;` creates that database and connects to it, so the statements after it run there;
+  - when the import finishes, you are connected to the last database the script used.
+- **Which databases are shown.** The pane lists the databases the import touched, plus those you create from the
+  editor. `postgres` is listed only if the script ran statements in it. A `CREATE DATABASE` from the editor must be a
+  Run of its own (a PostgreSQL rule); it does not connect automatically.
+- **Switching.** With two or more databases listed, click one to connect to it. Krash has one connection, so only the
+  connected database shows its schemas. Switching reopens the engine, like psql's `\c`: committed data stays, and an
+  open transaction is discarded (Krash asks first). Krash remembers the connected database across reloads.
 
 ## Deployment
 
@@ -81,7 +92,7 @@ to other origins (an E2E test checks this).
 | `src/db/db.worker.ts` | Owns the single PGlite instance; processes requests strictly in order. |
 | `src/db/engine.ts` | Script execution, type-name resolution, schema introspection, seeding and validation. |
 | `src/db/wire.ts` | Streaming PostgreSQL protocol reader with row/cell/result limits. |
-| `src/db/sqlLexer.ts` | Tiny lexer used **only** to refuse `COPY … FROM STDIN`, plus position → line/column helpers. |
+| `src/db/sqlLexer.ts` | Tiny lexer used to refuse `COPY … FROM STDIN` and to split imports at `CREATE DATABASE`, plus position → line/column helpers. |
 | `src/db/default.sql` | The default database. |
 | `src/workspace/*` | Session persistence, base dataset (default or imported), session lock. |
 | `src/components/*` | Focused UI components. `src/styles/tokens.css` holds all design tokens. |
@@ -114,9 +125,14 @@ These were validated in the PGlite spike (`spike/`, `tests/e2e/spike.spec.ts`) b
    the same IndexedDB database in a new one. The interrupted Run and any open transaction are lost; committed data
    survives (E2E-tested). An unexpected engine crash is handled the same way.
 5. **`COPY … FROM STDIN` is refused before execution.** In PGlite it hangs or aborts the engine (verified). A minimal
-   lexer that skips strings, comments, quoted identifiers and dollar-quoted bodies detects it. This is the only SQL
-   analysis Krash does.
-6. **Persistence.**
+   lexer that skips strings, comments, quoted identifiers and dollar-quoted bodies detects it. The same lexer splits an
+   import at top-level `CREATE DATABASE` statements. That is all the SQL analysis Krash does.
+6. **Several databases, one connection.** PGlite has one connection per instance, and it can't start with a new
+   database name or rename the current one (verified). An import therefore runs each `CREATE DATABASE` on its own,
+   finds the new database in `pg_database`, and reopens the same storage connected to it, like psql's `\c`. A temporary
+   in-memory cluster is copied to the new instance with `dumpDataDir`/`loadDataDir`. The dataset marker is a comment on
+   `postgres`; database comments are cluster-wide, so it can be read from any database.
+7. **Persistence.**
    - *The query text and UI preferences* live in `sessionStorage`, written about 400 ms after the last edit and read back to
      confirm. They survive a reload of the same tab, not a closed tab. The workspace heading shows *Saving…*,
      *Saved in this tab* or *Save failed*. Closing the tab while the editor contains SQL triggers the browser's
@@ -124,18 +140,20 @@ These were validated in the PGlite spike (`spike/`, `tests/e2e/spike.spec.ts`) b
    - *An imported script* is also kept in `sessionStorage`, up to 2 MB, so Reset and reload can rebuild it.
    - *The database* lives in IndexedDB under a per-session name `krash-<sessionId>-<generation>` (PGlite stores it as
      `/pglite/<name>`). IndexedDB was chosen over OPFS for Safari compatibility, and `relaxedDurability` stays off.
-     On reload the same database is reopened, not re-seeded. A dataset marker (a comment on the database) detects a
-     mismatch with the expected base.
+     On reload the same storage is reopened, connected to the last connected database, not re-seeded. The dataset
+     marker detects a mismatch with the expected base. The shown databases and the connected one are kept in
+     `sessionStorage`.
    - *Duplicated tabs* copy `sessionStorage`. A Web Lock per session detects the second tab. That tab gets its own new
      database and keeps a copy of the query. Two PGlite instances never write the same store.
    - *Cleanup.* IndexedDB is durable, not session-scoped. Each tab writes a heartbeat to `localStorage` once a minute.
      On startup Krash deletes old generations of its own session and the databases of sessions that have been silent
      for more than 12 hours.
-7. **Reset and import swap only after validation.** Both build the next database generation from scratch and verify
-   the dataset marker. Only then do they switch to it and delete the old one. A failed reset or import (for example a
+8. **Reset and import swap only after validation.** Both build the next database generation from scratch and verify
+   the dataset marker. Only then do they switch to it and delete the old one. Databases created from the editor are not
+   part of the import, so Reset removes them. A failed reset or import (for example a
    script with an error) leaves the previous database in use; an import error is shown in the Import dialog so the script
    can be fixed.
-8. **No assistance by construction.** The CodeMirror 6 editor has highlighting, line numbers, selection, undo/redo and
+9. **No assistance by construction.** The CodeMirror 6 editor has highlighting, line numbers, selection, undo/redo and
    bracket matching. There is no autocompletion, linting, auto-closing brackets or formatting (E2E-tested). The schema
    tree is read-only and never generates SQL.
 
