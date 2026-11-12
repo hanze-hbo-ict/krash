@@ -38,6 +38,10 @@ KRASH_E2E_DEV=1 npx playwright test tests/e2e/spike.spec.ts   # PGlite spike, ag
   on a blank line between statements, the one before it.
 - **Run script** (Ctrl/⌘ + Shift + Enter) runs everything in the editor as one script.
 - **Selection.** If text is selected, both buttons run exactly the selection (as in pgAdmin), e.g. a subquery.
+- **Copy.** The button at the bottom right of the Query pane copies the query (or the selection). The one in the
+  Results pane copies what is showing: a result table as tab-separated text with a header row (it pastes into a
+  spreadsheet or Word as a table; NULL is an empty cell; only the rows Krash received), COPY output as is, or the
+  messages as text. The engine and transaction status is shown in the Results pane header.
 - **Database pane.** A read-only tree of databases, schemas, tables and columns, plus three actions in its header:
   - **Reset** restores the last imported database. Until something is imported, that is the default database.
   - **Clear** clears the whole workspace: it deletes the query and this tab's database and starts fresh with the default

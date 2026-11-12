@@ -54,6 +54,8 @@ export interface SqlEditorHandle {
    * or the whole document ("all").
    */
   getRunTarget(mode: RunMode): { sql: string; offset: number; docText: string }
+  /** The selected text if there is any, else the whole document (for Copy). */
+  getCopyText(): string
   /** Place the cursor at an offset (used for "go to error position"). */
   moveTo(offset: number): void
 }
@@ -143,6 +145,13 @@ export const SqlEditor = forwardRef<SqlEditorHandle, Props>(function SqlEditor(
 
   useImperativeHandle(ref, () => ({
     focus: () => view.current?.focus(),
+    getCopyText: () => {
+      const v = view.current
+      if (!v) return ''
+      const sel = v.state.selection.main
+      const selected = v.state.sliceDoc(sel.from, sel.to)
+      return selected.trim() !== '' ? selected : v.state.doc.toString()
+    },
     getRunTarget: (mode) => {
       const v = view.current
       if (!v) return { sql: '', offset: 0, docText: '' }

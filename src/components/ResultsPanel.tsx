@@ -7,6 +7,8 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNod
 import type { ExecuteOutcome, StatementResult } from '../db/protocol'
 import type { RunRecord } from '../app/runTypes'
 import { describeOutcome, describeStatement, NUMERIC_OIDS, type MessageLine } from '../app/describe'
+import { messagesAsText, resultAsTsv } from '../app/copyText'
+import { CopyButton } from './CopyButton'
 
 const PAGE = 200
 
@@ -15,9 +17,11 @@ interface Props {
   onGoToError: (offset: number) => void
   /** Shown instead of results, e.g. when the database cannot start. */
   blocking?: ReactNode
+  /** The engine and session status (Ready, Running…, transaction open…). */
+  status: { state: string; text: string }
 }
 
-export function ResultsPanel({ run, onGoToError, blocking }: Props) {
+export function ResultsPanel({ run, onGoToError, blocking, status }: Props) {
   const outcome = run?.outcome ?? null
   const results = outcome?.results ?? []
   // Statements that returned rows (or COPY output) get their own view.
@@ -53,6 +57,18 @@ export function ResultsPanel({ run, onGoToError, blocking }: Props) {
   }
 
   const current = views.find((r) => `r${r.index}` === selected) ?? null
+  const showingMessages = !!outcome && selected === 'messages' && messages.length > 0
+  // What Copy copies: the visible result table (or COPY output), else the messages.
+  const copyText = current
+    ? () => (current.copyText !== null ? current.copyText : resultAsTsv(current))
+    : showingMessages
+      ? () => messagesAsText(messages)
+      : null
+  const copyLabel = current?.rowsTruncated
+    ? `Copy the first ${current.rows.length.toLocaleString('en')} rows`
+    : current
+      ? 'Copy result'
+      : 'Copy messages'
 
   return (
     <section className="panel results-panel" aria-labelledby="results-title">
@@ -82,14 +98,20 @@ export function ResultsPanel({ run, onGoToError, blocking }: Props) {
           </div>
         )}
         {run && !showTabs && views.length === 1 && <p className="result-count">{rowsLabel(views[0]!)}</p>}
+        <div className="results-actions">
+          <span className="db-status" data-state={status.state}>
+            {status.text}
+          </span>
+        </div>
       </div>
       <div className="results-body" id="results-body" role={showTabs ? 'tabpanel' : 'region'} tabIndex={0} aria-label="Result details">
         {blocking}
         {run?.status === 'running' && <p className="placeholder">Running…</p>}
         {run && <ErrorBox run={run} onGoToError={onGoToError} />}
-        {run && outcome && selected === 'messages' && messages.length > 0 && <Messages lines={messages} />}
+        {run && showingMessages && <Messages lines={messages} />}
         {run && outcome && current && <StatementView key={`${run.id}-${current.index}`} result={current} />}
       </div>
+      {copyText && run?.status === 'done' && <CopyButton label={copyLabel} getText={copyText} tooltipPos="above-end" />}
     </section>
   )
 }

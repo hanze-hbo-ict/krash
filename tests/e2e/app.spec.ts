@@ -335,6 +335,38 @@ test.describe('Krash', () => {
     await expect(toggle).toHaveAccessibleName('User postgres. Switch user', { timeout: 60_000 })
   })
 
+  test('copy buttons copy the query (or selection) and the visible result', async ({ page }) => {
+    await page.addInitScript(() => {
+      const w = window as unknown as { copied: string[] }
+      w.copied = []
+      Object.defineProperty(navigator, 'clipboard', {
+        value: { writeText: async (t: string) => void w.copied.push(t) },
+      })
+    })
+    await open(page)
+    const copied = () => page.evaluate(() => (window as unknown as { copied: string[] }).copied)
+    await setSql(page, "select 1 as id, 'a\tb' as v, null as n;\ncreate table copy_t (x int);")
+    await run(page)
+    await page.getByRole('button', { name: 'Copy query' }).click()
+    await expect(page.getByRole('button', { name: 'Copy query' })).toHaveAttribute('data-tooltip', 'Copied')
+    await page.getByRole('button', { name: 'Copy result' }).click()
+    await page.getByRole('tab', { name: 'Messages' }).click()
+    await page.getByRole('button', { name: 'Copy messages' }).click()
+    await expect
+      .poll(copied)
+      .toEqual([
+        "select 1 as id, 'a\tb' as v, null as n;\ncreate table copy_t (x int);",
+        'id\tv\tn\n1\t"a\tb"\t\n',
+        '#2: CREATE TABLE — completed.\n',
+      ])
+    // With a selection, only the selection.
+    await page.locator('.cm-content').click()
+    await page.keyboard.press(`${MOD}+End`)
+    await page.keyboard.press('Shift+Home')
+    await page.getByRole('button', { name: 'Copy query' }).click()
+    await expect.poll(async () => (await copied()).at(-1)).toBe('create table copy_t (x int);')
+  })
+
   test('11: huge results are bounded with an explicit notice', async ({ page }) => {
     await open(page)
     await setSql(page, 'select g, md5(g::text) from generate_series(1, 1000000) g;')

@@ -29,6 +29,7 @@ import { ResultsPanel } from '../components/ResultsPanel'
 import { Splitter } from '../components/Splitter'
 import { ConfirmDialog, ImportDatabaseDialog, type ConfirmRequest } from '../components/Dialogs'
 import { UserMenu } from '../components/UserMenu'
+import { CopyButton } from '../components/CopyButton'
 import { Icon, RunQueryIcon, ThemeIcon } from '../components/Icon'
 import type { ErrorLocation, RunRecord } from './runTypes'
 import { txText } from './describe'
@@ -682,9 +683,6 @@ export function App() {
               <div className="panel-header editor-header">
                 <h2 id="query-title">Query</h2>
                 <div className="run-actions">
-                  <span className="db-status" data-state={status.state}>
-                    {status.text}
-                  </span>
                   {phase === 'running' ? (
                     <button type="button" id="run" data-action="stop" onClick={stop} title="Stop: restarts the database engine">
                       <Icon name="stop" /> Stop
@@ -716,6 +714,7 @@ export function App() {
               </div>
               <div className="editor-body" id="editor-body">
                 {ws && <SqlEditor ref={editor} initialText={ws.sql} label="SQL query" onChange={onEdit} onRun={(mode) => void run(mode)} />}
+                {ws && <CopyButton label="Copy query" getText={() => editor.current?.getCopyText() ?? ''} tooltipPos="above-end" />}
               </div>
             </section>
             <Splitter
@@ -723,7 +722,7 @@ export function App() {
               containerRef={mainCol}
               onChange={(f) => updateWs((w) => ({ ...w, ui: { ...w.ui, editorFraction: f } }))}
             />
-            <ResultsPanel run={lastRun} onGoToError={goToError} blocking={failurePanel} />
+            <ResultsPanel run={lastRun} onGoToError={goToError} blocking={failurePanel} status={status} />
           </div>
         </div>
         <p className="workspace-motto">One database. One query at a time.</p>

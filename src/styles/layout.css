@@ -186,6 +186,13 @@ a {
   right: 0;
   transform: none;
 }
+[data-tooltip-pos='above-end']::after {
+  top: auto;
+  bottom: calc(100% + 6px);
+  left: auto;
+  right: 0;
+  transform: none;
+}
 
 /* ---- Header / footer (values from Kopje) ------------------------------- */
 .app-header,
@@ -615,7 +622,25 @@ main {
 }
 .editor-panel,
 .results-panel {
+  position: relative;
   min-height: 0;
+}
+/* Copy sits on the pane body, bottom right; it does not scroll. A plain, transparent icon like
+   the header ones; the soft background appears on hover. */
+.copy-button {
+  position: absolute;
+  z-index: 5;
+  right: 18px;
+  bottom: 16px;
+  width: 28px;
+  height: 28px;
+}
+.copy-button:hover:enabled {
+  background: var(--soft);
+}
+.editor-body .copy-button {
+  right: 10px;
+  bottom: 8px;
 }
 .editor-header {
   align-items: center;
@@ -700,6 +725,7 @@ main {
   opacity: 1;
 }
 .editor-body {
+  position: relative;
   flex: 1;
   min-height: 0;
   margin: 8px;
@@ -738,6 +764,14 @@ main {
   justify-content: flex-start;
   gap: 12px;
 }
+/* Status and Copy at the right end, wherever the tabs end. */
+.results-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
 .result-tabs {
   display: flex;
   gap: 2px;
@@ -769,9 +803,20 @@ main {
   overflow: auto;
   display: flex;
   flex-direction: column;
-  padding: 10px 12px;
-  margin: 2px;
-  border-radius: var(--radius-m);
+  /* A result table fills the body edge to edge, like a data grid; the pane border frames it. */
+  padding: 0;
+  border-radius: 0 0 calc(var(--radius-l) - 1px) calc(var(--radius-l) - 1px);
+}
+.results-body:focus-visible {
+  outline-offset: -2px;
+}
+/* Text keeps its padding: messages, errors, notices, COPY output. */
+.results-body > :not(.result-table-wrap) {
+  margin: 10px 12px;
+}
+.result-table-wrap > .result-summary,
+.result-table-wrap > .show-more {
+  margin: 8px 12px;
 }
 .placeholder {
   color: var(--muted);
@@ -846,8 +891,6 @@ main {
   max-width: 100%;
   align-self: flex-start;
   width: 100%;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-s);
 }
 .result-table {
   border-collapse: separate;
