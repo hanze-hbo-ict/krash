@@ -143,9 +143,9 @@ These were validated in the PGlite spike (`spike/`, `tests/e2e/spike.spec.ts`) b
    `postgres`; database comments are cluster-wide, so it can be read from any database.
 7. **Persistence.**
    - *The query text and UI preferences* live in `sessionStorage`, written about 400 ms after the last edit and read back to
-     confirm. They survive a reload of the same tab, not a closed tab. The workspace heading shows *Saving…*,
-     *Saved in this tab* or *Save failed*. Closing the tab while the editor contains SQL triggers the browser's
-     leave-page warning.
+     confirm. They survive a reload of the same tab, not a closed tab. Saving is silent; only a failed save is
+     shown, in the workspace heading. Closing the tab while the editor contains SQL other than the default query
+     triggers the browser's leave-page warning.
    - *An imported script* is also kept in `sessionStorage`, up to 2 MB, so Reset and reload can rebuild it.
    - *The database* lives in IndexedDB under a per-session name `krash-<sessionId>-<generation>` (PGlite stores it as
      `/pglite/<name>`). IndexedDB was chosen over OPFS for Safari compatibility, and `relaxedDurability` stays off.

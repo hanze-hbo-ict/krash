@@ -544,15 +544,6 @@ export function App() {
     }
   })()
 
-  const saveText =
-    saveState === 'saving'
-      ? 'Saving…'
-      : saveState === 'saved'
-        ? 'Saved in this tab'
-        : saveState === 'failed'
-          ? 'Save failed'
-          : 'Not saved'
-
   const cycleTheme = () => setTheme((t) => (t === 'system' ? 'light' : t === 'light' ? 'dark' : 'system'))
   const themeLabel = { system: 'System appearance', light: 'Light appearance', dark: 'Dark appearance' }[theme]
   const nextThemeLabel = { system: 'light', light: 'dark', dark: 'system' }[theme]
@@ -618,9 +609,12 @@ export function App() {
           <p className="eyebrow">
             POSTGRESQL WORKSPACE
           </p>
-          <p className={`save-state save-${saveState}`} role="status" title={saveError || undefined}>
-            {saveText}
-          </p>
+          {/* Saving is silent; only a failure is shown (unavailable storage is reported in the footer). */}
+          {saveState === 'failed' && (
+            <p className="save-state save-failed" role="alert" title={saveError || undefined}>
+              Your query could not be saved
+            </p>
+          )}
         </div>
 
         <div className={`workspace${collapsed ? ' sidebar-collapsed' : ''}`}>
@@ -748,7 +742,7 @@ export function App() {
 
       <footer className="app-footer">
         <a href="https://github.com/hanze-hbo-ict/krash">Krash on GitHub</a>
-        <span>No code completion or AI assistance. Everything runs in your browser, and your query is kept only in this tab.</span>
+        <span>No code completion or AI assistance. Everything runs in your browser, and your database is kept only in this tab.</span>
         <span className="storage-warning" hidden={!sessionMissing}>
           Session storage is unavailable: your query will be lost on reload.
         </span>

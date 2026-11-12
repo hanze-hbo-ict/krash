@@ -119,8 +119,7 @@ export function loadWorkspace(storage: Storage | null): Workspace | null {
 export type SaveState = 'saved' | 'saving' | 'failed' | 'unavailable'
 
 /**
- * Debounced writer. Reports state transitions so the UI can show
- * "Saved locally" / "Saving…" / "Save failed".
+ * Debounced writer. Reports state transitions so the UI can report a failed save.
  */
 export class WorkspaceSaver {
   private timer: ReturnType<typeof setTimeout> | null = null
