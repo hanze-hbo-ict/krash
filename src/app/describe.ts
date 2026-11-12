@@ -1,19 +1,23 @@
 /** Plain-text descriptions of run outcomes (for the Messages view and status). */
 import type { ExecuteOutcome, StatementResult } from '../db/protocol'
-import type { RunRecord } from './runTypes'
 
 // int2, int4, int8, oid, float4, float8, numeric, money
 export const NUMERIC_OIDS = new Set([20, 21, 23, 26, 700, 701, 790, 1700])
 
 const plural = (n: number, word: string) => `${n.toLocaleString('en')} ${word}${n === 1 ? '' : 's'}`
 
+const QUERY_COMMANDS = new Set(['SELECT', 'SHOW', 'EXPLAIN', 'VALUES', 'TABLE', 'FETCH'])
+
+/** A statement whose only outcome is its rows: its result tab already shows the row count. */
+function onlyReturnsRows(r: StatementResult): boolean {
+  return r.columns !== null && r.copyText === null && QUERY_COMMANDS.has(r.command)
+}
+
 export function describeStatement(r: StatementResult): string {
   const cmd = r.command
   if (r.copyText !== null) return `COPY output${r.rowCount !== null ? ` (${plural(r.rowCount, 'row')})` : ''}.`
   if (r.columns !== null) {
-    if (cmd === 'SELECT' || cmd === 'SHOW' || cmd === 'EXPLAIN' || cmd === 'VALUES' || cmd === 'TABLE' || cmd === 'FETCH') {
-      return `${plural(r.totalRows, 'row')}.`
-    }
+    if (QUERY_COMMANDS.has(cmd)) return `${plural(r.totalRows, 'row')}.`
     // e.g. INSERT ... RETURNING
     return `${cmd}: ${plural(r.rowCount ?? r.totalRows, 'row')} affected, ${plural(r.totalRows, 'row')} returned.`
   }
@@ -28,23 +32,10 @@ export interface MessageLine {
   text: string
 }
 
-export function describeOutcome(run: RunRecord, o: ExecuteOutcome): MessageLine[] {
+export function describeOutcome(o: ExecuteOutcome): MessageLine[] {
   const out: MessageLine[] = []
-  const where =
-    run.scope === 'selection'
-      ? `Selected text (lines ${run.lines.from}–${run.lines.to})`
-      : run.scope === 'statement'
-        ? run.lines.from === run.lines.to
-          ? `The query on line ${run.lines.from}`
-          : `The query on lines ${run.lines.from}–${run.lines.to}`
-        : 'The script'
-  out.push({
-    level: 'info',
-    label: 'Run',
-    text: `${where} at ${new Date(run.startedAt).toLocaleTimeString('en-GB')}, ${o.durationMs} ms.`,
-  })
   if (o.statementCount === 0 && !o.error) out.push({ level: 'info', label: 'Empty', text: 'There was no SQL statement to run.' })
-  for (const r of o.results) out.push({ level: 'ok', label: `#${r.index}`, text: describeStatement(r) })
+  for (const r of o.results) if (!onlyReturnsRows(r)) out.push({ level: 'ok', label: `#${r.index}`, text: describeStatement(r) })
   if (o.resultsDropped > 0)
     out.push({ level: 'warn', label: 'Limit', text: `${plural(o.resultsDropped, 'more statement')} completed; their results are not shown.` })
   for (const n of o.notices) {
@@ -56,7 +47,8 @@ export function describeOutcome(run: RunRecord, o: ExecuteOutcome): MessageLine[
     const label = o.error.code === 'KRASH' ? 'Not run' : o.error.severity
     out.push({ level: 'error', label, text: `${o.errorStatementIndex && o.statementCount > 0 ? `#${o.errorStatementIndex}: ` : ''}${o.error.message}` })
   }
-  out.push({ level: 'info', label: 'Session', text: txText(o.txStatus) })
+  // Only worth a line when a transaction is still open or has failed.
+  if (o.txStatus !== 'I') out.push({ level: o.txStatus === 'E' ? 'warn' : 'info', label: 'Session', text: txText(o.txStatus) })
   return out
 }
 

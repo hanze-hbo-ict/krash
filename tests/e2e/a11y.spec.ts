@@ -35,8 +35,9 @@ test('keyboard only: run, switch result tabs and resize without a mouse', async 
   await open(page)
   await page.locator('.cm-content').focus()
   await page.keyboard.press(`${MOD}+A`)
-  await page.keyboard.insertText('select 1 as one;')
-  await page.keyboard.press(`${MOD}+Enter`)
+  // A result and a message (CREATE TABLE), so there are two tabs.
+  await page.keyboard.insertText('select 1 as one;\ncreate table kb_t (x int);')
+  await page.keyboard.press(`${MOD}+Shift+Enter`)
   await expect(page.locator('#results-body tbody td').first()).toHaveText('1')
   await page.getByRole('tab', { name: 'Result · 1 row' }).focus()
   await page.keyboard.press('ArrowRight')

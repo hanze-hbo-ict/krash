@@ -53,7 +53,7 @@ export interface SqlEditorHandle {
    * both modes, as in pgAdmin), else the statement at the cursor ("statement")
    * or the whole document ("all").
    */
-  getRunTarget(mode: RunMode): { sql: string; offset: number; scope: 'selection' | 'statement' | 'all'; docText: string }
+  getRunTarget(mode: RunMode): { sql: string; offset: number; docText: string }
   /** Place the cursor at an offset (used for "go to error position"). */
   moveTo(offset: number): void
 }
@@ -145,17 +145,17 @@ export const SqlEditor = forwardRef<SqlEditorHandle, Props>(function SqlEditor(
     focus: () => view.current?.focus(),
     getRunTarget: (mode) => {
       const v = view.current
-      if (!v) return { sql: '', offset: 0, scope: mode, docText: '' }
+      if (!v) return { sql: '', offset: 0, docText: '' }
       const docText = v.state.doc.toString()
       const sel = v.state.selection.main
       if (!sel.empty && docText.slice(sel.from, sel.to).trim() !== '') {
-        return { sql: docText.slice(sel.from, sel.to), offset: sel.from, scope: 'selection', docText }
+        return { sql: docText.slice(sel.from, sel.to), offset: sel.from, docText }
       }
       if (mode === 'statement') {
         const st = statementAt(docText, sel.head)
-        if (st) return { sql: docText.slice(st.start, st.end), offset: st.start, scope: 'statement', docText }
+        if (st) return { sql: docText.slice(st.start, st.end), offset: st.start, docText }
       }
-      return { sql: docText, offset: 0, scope: mode, docText }
+      return { sql: docText, offset: 0, docText }
     },
     moveTo: (offset: number) => {
       const v = view.current

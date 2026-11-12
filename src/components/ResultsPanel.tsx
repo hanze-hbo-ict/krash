@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import type { ExecuteOutcome, StatementResult } from '../db/protocol'
 import type { RunRecord } from '../app/runTypes'
-import { describeOutcome, describeStatement, NUMERIC_OIDS } from '../app/describe'
+import { describeOutcome, describeStatement, NUMERIC_OIDS, type MessageLine } from '../app/describe'
 
 const PAGE = 200
 
@@ -31,7 +31,13 @@ export function ResultsPanel({ run, onGoToError, blocking }: Props) {
     setSelected(last ? `r${last.index}` : 'messages')
   }, [run?.id, run?.status]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const tabs = [...views.map((r) => ({ key: `r${r.index}`, label: tabLabel(r, views.length) })), { key: 'messages', label: messagesLabel(run) }]
+  const messages = useMemo(() => (outcome ? describeOutcome(outcome) : []), [outcome])
+  // A Messages tab only when there are messages; no tab bar at all for a single view.
+  const tabs = [
+    ...views.map((r) => ({ key: `r${r.index}`, label: tabLabel(r, views.length) })),
+    ...(messages.length > 0 ? [{ key: 'messages', label: messagesLabel(run) }] : []),
+  ]
+  const showTabs = tabs.length > 1
 
   const onKey = (e: KeyboardEvent, i: number) => {
     let n: number | null = null
@@ -52,7 +58,7 @@ export function ResultsPanel({ run, onGoToError, blocking }: Props) {
     <section className="panel results-panel" aria-labelledby="results-title">
       <div className="panel-header results-header">
         <h2 id="results-title">Results</h2>
-        {run && (
+        {run && showTabs && (
           <div className="result-tabs" role="tablist" aria-label="Statement results">
             {tabs.map((t, i) => (
               <button
@@ -75,22 +81,25 @@ export function ResultsPanel({ run, onGoToError, blocking }: Props) {
             ))}
           </div>
         )}
-        {run?.outcome && <span className="run-meta">{runMeta(run)}</span>}
+        {run && !showTabs && views.length === 1 && <p className="result-count">{rowsLabel(views[0]!)}</p>}
       </div>
-      <div className="results-body" id="results-body" role="tabpanel" tabIndex={0} aria-label="Result details">
+      <div className="results-body" id="results-body" role={showTabs ? 'tabpanel' : 'region'} tabIndex={0} aria-label="Result details">
         {blocking}
         {run?.status === 'running' && <p className="placeholder">Running…</p>}
         {run && <ErrorBox run={run} onGoToError={onGoToError} />}
-        {run && outcome && selected === 'messages' && <Messages run={run} outcome={outcome} />}
+        {run && outcome && selected === 'messages' && messages.length > 0 && <Messages lines={messages} />}
         {run && outcome && current && <StatementView key={`${run.id}-${current.index}`} result={current} />}
       </div>
     </section>
   )
 }
 
+function rowsLabel(r: StatementResult): string {
+  return r.copyText !== null ? 'COPY' : `${r.totalRows.toLocaleString('en')} ${r.totalRows === 1 ? 'row' : 'rows'}`
+}
+
 function tabLabel(r: StatementResult, count: number): string {
-  const n = r.copyText !== null ? 'COPY' : `${r.totalRows} ${r.totalRows === 1 ? 'row' : 'rows'}`
-  return count === 1 ? `Result · ${n}` : `${r.index} · ${n}`
+  return count === 1 ? `Result · ${rowsLabel(r)}` : `${r.index} · ${rowsLabel(r)}`
 }
 
 function messagesLabel(run: RunRecord | null): string {
@@ -98,11 +107,6 @@ function messagesLabel(run: RunRecord | null): string {
   return n > 0 ? `Messages (${n})` : 'Messages'
 }
 
-function runMeta(run: RunRecord): string {
-  const o = run.outcome!
-  const parts = [{ selection: 'Selection', statement: 'Query', all: 'All' }[run.scope], `${o.durationMs} ms`]
-  return parts.join(' · ')
-}
 
 function ErrorBox({ run, onGoToError }: { run: RunRecord; onGoToError: (offset: number) => void }) {
   if (run.failure) {
@@ -163,8 +167,7 @@ function PartialNote({ outcome }: { outcome: ExecuteOutcome }) {
   )
 }
 
-function Messages({ run, outcome }: { run: RunRecord; outcome: ExecuteOutcome }) {
-  const lines = describeOutcome(run, outcome)
+function Messages({ lines }: { lines: MessageLine[] }) {
   return (
     <div className="messages" aria-live="off">
       <ol className="message-list">
@@ -206,18 +209,18 @@ function ResultTable({ result }: { result: StatementResult }) {
   const numeric = cols.map((c) => NUMERIC_OIDS.has(c.typeOid))
   return (
     <div className="result-table-wrap">
-      <p className="result-summary">
-        {describeStatement(result)}
-        {result.rowsTruncated && (
-          <>
-            {' '}
+      {/* The row count is in the tab (or the pane header); only say when not everything is shown. */}
+      {(result.rowsTruncated || result.cellsTruncated) && (
+        <p className="result-summary">
+          {result.rowsTruncated && (
             <strong className="notice-inline">
               Showing the first {result.rows.length.toLocaleString('en')} of {result.totalRows.toLocaleString('en')} rows.
             </strong>
-          </>
-        )}
-        {result.cellsTruncated && <strong className="notice-inline"> Some long values are cut off.</strong>}
-      </p>
+          )}
+          {result.rowsTruncated && result.cellsTruncated && ' '}
+          {result.cellsTruncated && <strong className="notice-inline">Some long values are cut off.</strong>}
+        </p>
+      )}
       <div className="table-scroll" tabIndex={0} role="region" aria-label={`Result table, ${result.rows.length} rows shown`}>
         <table className="result-table">
           <thead>

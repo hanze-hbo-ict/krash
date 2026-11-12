@@ -297,13 +297,8 @@ export function App() {
     const target = editor.current.getRunTarget(mode)
     const id = ++runCounter.current
     activeRun.current = id
-    const fromLine = offsetToLineCol(target.docText, target.offset).line
-    const toLine = offsetToLineCol(target.docText, target.offset + target.sql.length).line
     const record: RunRecord = {
       id,
-      scope: target.scope,
-      lines: { from: fromLine, to: toLine },
-      startedAt: Date.now(),
       status: 'running',
       outcome: null,
       failure: null,
@@ -397,9 +392,6 @@ export function App() {
       if (mode === 'reset') {
         setLastRun({
           id: ++runCounter.current,
-          scope: 'all',
-          lines: { from: 1, to: 1 },
-          startedAt: Date.now(),
           status: 'done',
           outcome: null,
           failure: { kind: f.kind, message: `Reset failed: ${message}` },
@@ -431,9 +423,6 @@ export function App() {
       const f = err instanceof DbFailure ? err.failure : { kind: 'internal' as const, message: String(err) }
       setLastRun({
         id: ++runCounter.current,
-        scope: 'all',
-        lines: { from: 1, to: 1 },
-        startedAt: Date.now(),
         status: 'done',
         outcome: null,
         failure: { kind: f.kind, message: `Could not connect to ${what}: ${f.message}` },

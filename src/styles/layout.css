@@ -763,14 +763,6 @@ main {
   font-weight: 650;
   border-color: var(--line);
 }
-.run-meta {
-  color: var(--muted);
-  font-size: var(--text-s);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 40%;
-}
 .results-body {
   flex: 1;
   min-height: 0;
@@ -822,6 +814,15 @@ main {
   color: var(--ink);
   font-size: var(--text-s);
   margin-top: 6px !important;
+}
+/* Where the tabs would be, with the text where a first tab's label would start. */
+.result-count {
+  flex: 1;
+  margin: 0;
+  padding-left: 12px;
+  color: var(--muted);
+  font-size: var(--text-s);
+  font-weight: 500;
 }
 .result-summary {
   margin: 0 0 8px;
@@ -1058,9 +1059,6 @@ main {
   }
   .editor-header {
     flex-wrap: wrap;
-  }
-  .run-meta {
-    display: none;
   }
 }
 

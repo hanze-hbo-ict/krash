@@ -44,7 +44,9 @@ test.describe('Krash', () => {
     // A new workspace starts with a query on the default table.
     await expect.poll(() => editorText(page)).toBe('SELECT * FROM people;\n')
     await page.getByRole('button', { name: 'Run query', exact: true }).click()
-    await expect(page.getByRole('tab', { name: /Result · 3 rows/ })).toBeVisible()
+    // One result and no messages: no tab bar, and the row count in the pane header.
+    await expect(page.locator('.result-count')).toHaveText('3 rows')
+    await expect(page.getByRole('tablist')).toHaveCount(0)
 
     await setSql(page, 'select count(*) as n from people;')
     await run(page)
@@ -104,13 +106,13 @@ test.describe('Krash', () => {
     const firstCell = results(page).locator('tbody td').first()
     const ready = () => expect(page.locator('.db-status')).toHaveText('Ready')
     const resultTabs = page.getByRole('tab').filter({ hasNotText: 'Messages' })
+    const noTabs = () => expect(page.getByRole('tablist')).toHaveCount(0) // a single result has no tab bar
 
     // Cursor at the end of the text: the last query.
     await page.keyboard.press(`${MOD}+Enter`)
     await ready()
     await expect(firstCell).toHaveText('333')
-    await expect(page.locator('.run-meta')).toContainText('Query')
-    await expect(resultTabs).toHaveCount(1)
+    await noTabs()
 
     // Cursor in the first query (start of the text).
     await page.keyboard.press(`${MOD}+Home`)
@@ -122,7 +124,6 @@ test.describe('Krash', () => {
     await page.keyboard.press(`${MOD}+Shift+Enter`)
     await ready()
     await expect(resultTabs).toHaveCount(3)
-    await expect(page.locator('.run-meta')).toContainText('All')
 
     // A selection (the third line) wins for both buttons.
     await page.locator('.cm-content').click()
@@ -131,8 +132,7 @@ test.describe('Krash', () => {
     await page.getByRole('button', { name: 'Run script', exact: true }).click()
     await ready()
     await expect(firstCell).toHaveText('333')
-    await expect(resultTabs).toHaveCount(1)
-    await expect(page.locator('.run-meta')).toContainText('Selection')
+    await noTabs()
   })
 
   test('6–7: the query and database changes survive a reload without re-seeding', async ({ page }) => {

@@ -11,11 +11,6 @@ export interface ErrorLocation {
 
 export interface RunRecord {
   id: number
-  /** What was run: the selected text, the statement at the cursor, or the whole editor. */
-  scope: 'selection' | 'statement' | 'all'
-  /** 1-based line range of the executed text within the document. */
-  lines: { from: number; to: number }
-  startedAt: number
   status: 'running' | 'done'
   outcome: ExecuteOutcome | null
   failure: WorkerFailure | null
