@@ -24,13 +24,13 @@ button {
   border: 1px solid var(--line);
   background: var(--panel);
   border-radius: var(--radius-m);
-  padding: 0.5rem 0.8rem;
+  /* Kopje's 0.55rem 0.8rem; in px because the root font size here is 13px, not 16px. */
+  padding: 8.8px 12.8px;
   font-weight: 600;
   font-size: var(--text-m);
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  line-height: 1.2;
 }
 button:hover:enabled {
   background: var(--soft);
@@ -122,9 +122,22 @@ a {
   background: transparent;
   border-color: transparent;
   border-radius: var(--radius-s);
-  padding: 5px;
+  padding: 4px;
   display: inline-grid;
   place-items: center;
+}
+/* Pane header controls have Kopje's sizes: 34px icon buttons with 18px icons, 35px buttons. */
+.panel-header .icon-button {
+  width: 34px;
+  height: 34px;
+}
+.panel-header .icon-button .icon {
+  width: 18px;
+  height: 18px;
+}
+.run-actions button {
+  height: 35px;
+  white-space: nowrap;
 }
 .icon-button:hover:enabled {
   color: var(--ink);
@@ -249,6 +262,8 @@ main {
 }
 .save-state {
   margin: 0;
+  /* Same line height as the 10px eyebrow beside it, so the row is as tall as Kopje's. */
+  line-height: 12px;
   font-size: var(--text-s);
   color: var(--muted);
 }
@@ -641,7 +656,7 @@ main {
   color: var(--error);
 }
 #run {
-  min-width: 96px;
+  min-width: 110px;
   justify-content: center;
 }
 #run .icon {
@@ -951,7 +966,8 @@ main {
   box-shadow: 0 16px 48px #00000040;
 }
 .modal-wide {
-  width: min(860px, calc(100vw - 32px));
+  /* Kopje's import dialog. */
+  width: min(720px, calc(100vw - 32px));
 }
 .modal::backdrop {
   background: var(--backdrop);
@@ -1002,7 +1018,7 @@ main {
 .export-preview {
   resize: vertical;
   width: 100%;
-  height: min(45dvh, 380px);
+  height: min(50dvh, 420px);
   font-family: var(--font-mono);
   color: var(--ink);
   background: var(--gutter);

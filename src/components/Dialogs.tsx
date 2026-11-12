@@ -83,7 +83,6 @@ export function ImportDatabaseDialog({ open, busy, error, onClose, onImport }: I
         spellCheck={false}
         autoComplete="off"
         value={text}
-        placeholder="create table … ;"
         onChange={(e) => setText(e.target.value)}
       />
       <div className="modal-message" role="status" aria-live="polite">
@@ -91,8 +90,8 @@ export function ImportDatabaseDialog({ open, busy, error, onClose, onImport }: I
         {error && !busy && <p className="text-error">Import failed: {error}</p>}
       </div>
       <div className="modal-actions">
-        <button type="button" className="danger" disabled={!text.trim() || tooLarge || busy} onClick={() => onImport(text)}>
-          {busy ? 'Importing…' : 'Clear database and import'}
+        <button type="button" className="primary" disabled={!text.trim() || tooLarge || busy} onClick={() => onImport(text)}>
+          {busy ? 'Replacing…' : 'Replace database'}
         </button>
         <button type="button" onClick={onClose}>
           Cancel
