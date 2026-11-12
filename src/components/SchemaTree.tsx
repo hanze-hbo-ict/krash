@@ -1,12 +1,15 @@
 /**
  * Read-only schema explorer: databases → schemas → tables/views → columns with
- * types and key markers. Only the connected database can be inspected (one
+ * their type and icons for primary key, foreign key (the relation as tooltip)
+ * and nullable. Only the connected database can be inspected (one
  * connection); clicking another listed database connects to it, like psql's \c.
  * Built from native <details>/<summary> for keyboard support. No inline
  * editing, no generated queries.
  */
 import { useState } from 'react'
 import type { SchemaInfo, SchemaRelation } from '../db/protocol'
+import { shortType } from '../app/describe'
+import { Icon } from './Icon'
 
 interface Props {
   schema: SchemaInfo | null
@@ -115,23 +118,11 @@ function Namespaces({
                           {rel.columns.map((c) => (
                             <li key={c.name}>
                               <span className="col-name">{c.name}</span>
-                              <span className="col-type">{c.type}</span>
+                              <span className="col-type">{shortType(c.type)}</span>
                               <span className="col-flags">
-                                {c.isPrimaryKey && (
-                                  <abbr className="flag flag-pk" title="Primary key">
-                                    PK
-                                  </abbr>
-                                )}
-                                {c.references && (
-                                  <span className="flag flag-fk" title={`Foreign key to ${c.references}`}>
-                                    <abbr title="Foreign key">FK</abbr> → {c.references}
-                                  </span>
-                                )}
-                                {c.notNull && !c.isPrimaryKey && (
-                                  <abbr className="flag flag-nn" title="NOT NULL">
-                                    NN
-                                  </abbr>
-                                )}
+                                {c.isPrimaryKey && <Flag kind="pk" icon="key" label="Primary key" />}
+                                {c.references && <Flag kind="fk" icon="arrow" label={`References ${c.references}`} />}
+                                {!c.notNull && !c.isPrimaryKey && <Flag kind="null" icon="empty-set" label="Nullable" />}
                               </span>
                             </li>
                           ))}
@@ -146,5 +137,14 @@ function Namespaces({
         )
       })}
     </>
+  )
+}
+
+/** A column property as a small icon, with the same tooltip as the buttons and a name for screen readers. */
+function Flag({ kind, icon, label }: { kind: string; icon: string; label: string }) {
+  return (
+    <span className={`flag flag-${kind}`} role="img" aria-label={label} data-tooltip={label} data-tooltip-pos="end">
+      <Icon name={icon} />
+    </span>
   )
 }

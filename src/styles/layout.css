@@ -167,9 +167,11 @@ a {
   color: var(--panel);
   white-space: nowrap;
   pointer-events: none;
-  visibility: hidden;
+  /* display (not visibility), so a hidden tooltip takes no space, e.g. at the bottom of a scrolling tree. */
+  display: none;
   border-radius: var(--radius-s);
   padding: 4px 8px;
+  font-family: var(--font-sans);
   font-size: var(--text-s);
   font-weight: 500;
   position: absolute;
@@ -179,7 +181,7 @@ a {
 }
 [data-tooltip]:hover::after,
 [data-tooltip]:focus-visible::after {
-  visibility: visible;
+  display: block;
 }
 [data-tooltip-pos='end']::after {
   left: auto;
@@ -508,22 +510,16 @@ main {
   gap: 4px;
 }
 .flag {
-  font-family: var(--font-sans);
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.3px;
-  text-decoration: none;
-  border: 1px solid var(--line-strong);
-  border-radius: 4px;
-  padding: 0 4px;
-  color: var(--muted);
-}
-.flag-pk {
+  display: inline-grid;
+  place-items: center;
   color: var(--ink);
-  border-color: var(--ink);
 }
-.flag-fk abbr {
-  text-decoration: none;
+.flag .icon {
+  width: 13px;
+  height: 13px;
+}
+.flag-null {
+  color: var(--muted);
 }
 .schema-empty {
   color: var(--muted);
@@ -815,7 +811,8 @@ main {
   margin: 10px 12px;
 }
 .result-table-wrap > .result-summary,
-.result-table-wrap > .show-more {
+.result-table-wrap > .show-more,
+.table-scroll > .placeholder {
   margin: 8px 12px;
 }
 .placeholder {

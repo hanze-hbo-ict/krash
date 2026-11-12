@@ -284,6 +284,21 @@ describe('schema introspection', () => {
   })
 })
 
+describe('serial columns', () => {
+  it('shows serial, bigserial and smallserial; identity and plain defaults keep their type', async () => {
+    const conn = await PGlite.create()
+    await executeScript(
+      conn,
+      `create schema "My Schema";
+       create table "My Schema"."T" (a serial primary key, b bigserial, c smallserial, d int generated always as identity,
+                                     e int default 0, f int);`,
+    )
+    const ns = (await introspectSchema(conn)).namespaces.find((n) => n.name === 'My Schema')!
+    expect(ns.relations[0]!.columns.map((c) => c.type)).toEqual(['serial', 'bigserial', 'smallserial', 'integer', 'integer', 'integer'])
+    await conn.close()
+  })
+})
+
 describe('users', () => {
   it('lists login roles, switches the session user and enforces privileges', async () => {
     const conn = await PGlite.create()

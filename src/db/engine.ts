@@ -120,7 +120,10 @@ select n.nspname as schema, c.relname as rel, c.relkind::text as kind,
           join pg_class fc on fc.oid = fk.confrelid
           join pg_namespace fn on fn.oid = fc.relnamespace
           join pg_attribute fa on fa.attrelid = fk.confrelid and fa.attnum = k.refcol
-         where fk.conrelid = c.oid and fk.contype = 'f' and k.col = a.attnum) as refs
+         where fk.conrelid = c.oid and fk.contype = 'f' and k.col = a.attnum) as refs,
+       -- serial is integer + a nextval default + a sequence owned by the column (identity columns also own one).
+       coalesce(a.attidentity = '' and a.atthasdef
+                and pg_get_serial_sequence(format('%I.%I', n.nspname, c.relname), a.attname) is not null, false) as is_serial
   from pg_class c
   join pg_namespace n on n.oid = c.relnamespace
   left join pg_attribute a on a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped
@@ -134,6 +137,9 @@ select nspname as schema from pg_namespace
  where nspname not in ('pg_catalog', 'information_schema')
    and nspname not like 'pg\\_toast%' and nspname not like 'pg\\_temp%'
  order by nspname = 'public' desc, nspname`
+
+/** The type name a serial column was declared with. */
+const SERIAL: Record<string, string> = { integer: 'serial', bigint: 'bigserial', smallint: 'smallserial' }
 
 const KIND: Record<string, SchemaRelation['kind']> = {
   r: 'table',
@@ -159,6 +165,7 @@ export async function introspectSchema(db: PGlite): Promise<SchemaInfo> {
     not_null: boolean | null
     is_pk: boolean
     refs: string | null
+    is_serial: boolean
   }>(SCHEMA_SQL)
   const byNs = new Map<string, Map<string, SchemaRelation>>()
   for (const { schema } of nsRes.rows) byNs.set(schema, new Map())
@@ -170,7 +177,7 @@ export async function introspectSchema(db: PGlite): Promise<SchemaInfo> {
     if (row.col !== null) {
       const col: SchemaColumn = {
         name: row.col,
-        type: row.type ?? '',
+        type: row.is_serial ? (SERIAL[row.type ?? ''] ?? row.type ?? '') : (row.type ?? ''),
         notNull: !!row.not_null,
         isPrimaryKey: row.is_pk,
         references: row.refs,

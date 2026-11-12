@@ -4,6 +4,18 @@ import type { ExecuteOutcome, StatementResult } from '../db/protocol'
 // int2, int4, int8, oid, float4, float8, numeric, money
 export const NUMERIC_OIDS = new Set([20, 21, 23, 26, 700, 701, 790, 1700])
 
+/**
+ * PostgreSQL's long type names in their usual short form: varchar(50), char(3),
+ * timestamp(3), timestamptz, time, timetz (also for arrays).
+ */
+export function shortType(type: string): string {
+  return type
+    .replace(/\bcharacter varying\b/g, 'varchar')
+    .replace(/\bcharacter\b/g, 'char')
+    .replace(/\b(timestamp|time)(\(\d+\))? without time zone\b/g, '$1$2')
+    .replace(/\b(timestamp|time)(\(\d+\))? with time zone\b/g, '$1tz$2')
+}
+
 const plural = (n: number, word: string) => `${n.toLocaleString('en')} ${word}${n === 1 ? '' : 's'}`
 
 const QUERY_COMMANDS = new Set(['SELECT', 'SHOW', 'EXPLAIN', 'VALUES', 'TABLE', 'FETCH'])

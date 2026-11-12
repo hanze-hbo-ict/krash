@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import type { ExecuteOutcome, StatementResult } from '../db/protocol'
 import type { RunRecord } from '../app/runTypes'
-import { describeOutcome, describeStatement, NUMERIC_OIDS, type MessageLine } from '../app/describe'
+import { describeOutcome, describeStatement, NUMERIC_OIDS, shortType, type MessageLine } from '../app/describe'
 import { messagesAsText, resultAsTsv } from '../app/copyText'
 import { CopyButton } from './CopyButton'
 
@@ -251,9 +251,9 @@ function ResultTable({ result }: { result: StatementResult }) {
                 <span className="visually-hidden">Row number</span>
               </th>
               {cols.map((c, i) => (
-                <th scope="col" key={i} title={c.typeName ?? undefined} className={numeric[i] ? 'num' : undefined}>
+                <th scope="col" key={i} title={c.typeName ? shortType(c.typeName) : undefined} className={numeric[i] ? 'num' : undefined}>
                   <span className="col-head">{c.name}</span>
-                  {c.typeName && <span className="col-head-type">{c.typeName}</span>}
+                  {c.typeName && <span className="col-head-type">{shortType(c.typeName)}</span>}
                 </th>
               ))}
             </tr>
