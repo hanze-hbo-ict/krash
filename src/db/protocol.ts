@@ -97,6 +97,12 @@ export interface SchemaInfo {
   database: string
   /** Every non-template database of the cluster (the UI decides which to show). */
   allDatabases: string[]
+  /** session_user: the user this session is connected as. */
+  user: string
+  /** current_user: differs from `user` after SET ROLE. */
+  role: string
+  /** Roles that can log in (CREATE USER), excluding the built-in pg_* roles. */
+  users: string[]
   namespaces: SchemaNamespace[]
 }
 
@@ -106,6 +112,8 @@ export interface DbInfo {
   datasetId: string
   /** The database the session is connected to. */
   database: string
+  /** The user (session_user) the session is connected as. */
+  user: string
   /** Set when the dataset was (re)built now: the databases it touched. Null when reused. */
   databases: string[] | null
   /** True if the database was (re)seeded during this init. */
@@ -132,12 +140,14 @@ export interface DatasetSpec {
 }
 
 export type DbRequest =
-  | { type: 'init'; dbName: string | null; dataset: DatasetSpec; database: string | null }
+  /** `user` falls back to postgres when that role no longer exists. */
+  | { type: 'init'; dbName: string | null; dataset: DatasetSpec; database: string | null; user?: string | null }
   | { type: 'execute'; sql: string; maxRows: number }
   | { type: 'getSchema' }
   | { type: 'createFresh'; dbName: string | null; dataset: DatasetSpec }
   | { type: 'dropDatabase'; dbName: string }
-  | { type: 'connect'; database: string }
+  /** Like psql's \c database user: a new session in `database` as `user`. */
+  | { type: 'connect'; database: string; user: string }
   | { type: 'close' }
   | { type: 'health' }
 

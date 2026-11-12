@@ -18,6 +18,8 @@ export interface Workspace {
   sql: string
   /** The PostgreSQL database this session is connected to. */
   database: string
+  /** The PostgreSQL user (session_user) this session is connected as. */
+  user: string
   /**
    * Databases shown in the Database pane: those the base script touched, plus
    * those created from the editor. Switching is possible between these.

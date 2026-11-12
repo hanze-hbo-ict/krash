@@ -10,7 +10,10 @@ import {
   introspectSchema,
   buildDatabases,
   listDatabases,
+  listUsers,
   readDatasetMarker,
+  sessionUser,
+  setSessionUser,
   SeedError,
   type Reconnect,
 } from './engine'
@@ -145,6 +148,7 @@ async function info(
     pgliteVersion: /PGlite ([\d.]+)/.exec(v)?.[1] ?? 'unknown',
     datasetId: datasetIdValue,
     database: await currentDatabase(instance),
+    user: await sessionUser(instance),
     databases,
     seeded,
     datasetMismatch: mismatch,
@@ -220,6 +224,11 @@ async function handle(req: DbRequest): Promise<unknown> {
       db = instance
       dbName = req.dbName
       datasetId = req.dataset.id
+      if (req.user && req.user !== info.user) {
+        // A user that was dropped (or renamed) since: stay connected as postgres.
+        await setSessionUser(instance, req.user).catch(() => {})
+        info.user = await sessionUser(instance)
+      }
       return info
     }
     case 'createFresh': {
@@ -241,15 +250,24 @@ async function handle(req: DbRequest): Promise<unknown> {
     case 'connect': {
       const instance = requireDb()
       const previous = await currentDatabase(instance)
+      const previousUser = await sessionUser(instance)
       if (!(await listDatabases(instance)).includes(req.database)) {
         throw new Failure('internal', `The database “${req.database}” does not exist.`)
+      }
+      if (!(await listUsers(instance)).includes(req.user)) {
+        throw new Failure('internal', `The user “${req.user}” does not exist or cannot log in.`)
       }
       db = null
       try {
         db = await reconnectFor(dbName)(instance, req.database)
+        if (req.user !== 'postgres') await setSessionUser(db, req.user)
       } catch (err) {
         // Try to get back to where we were (only possible with persistent storage).
-        if (dbName) db = await open(dbName, previous).catch(() => null)
+        if (dbName) {
+          if (db) await db.close().catch(() => {})
+          db = await open(dbName, previous).catch(() => null)
+          if (db && previousUser !== 'postgres') await setSessionUser(db, previousUser).catch(() => {})
+        }
         throw err
       }
       return info(db, datasetId, false, null, dbName, null)

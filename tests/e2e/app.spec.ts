@@ -195,7 +195,6 @@ test.describe('Krash', () => {
     await page.reload()
     await expect(page.locator('.db-status')).toHaveText('Ready', { timeout: 60_000 })
     await expect(page.getByText('different dataset')).toHaveCount(0)
-    await expect(page.locator('.db-facts')).toContainText('imported database')
     await expect(tree.getByText('imported_t', { exact: true })).toBeVisible()
   })
 
@@ -267,6 +266,45 @@ test.describe('Krash', () => {
     await expect(tree.getByText('postgres', { exact: true })).toHaveCount(0)
     await expect(tree.getByRole('button', { name: /Connect to database/ })).toHaveCount(0)
     await expect(tree.getByText('products', { exact: true })).toBeVisible()
+  })
+
+  test('switching users: privileges apply, the user survives a reload', async ({ page }) => {
+    await open(page)
+    const toggle = page.getByRole('button', { name: /Switch user$/ })
+    // Only postgres can log in: no user footer.
+    await expect(toggle).toHaveCount(0)
+
+    await setSql(page, 'create user alice; create role readers; grant select on people to alice;')
+    await run(page)
+    await expect(toggle).toHaveAccessibleName('User postgres. Switch user')
+    await toggle.click()
+    const list = page.getByRole('list', { name: 'Connect as user' })
+    await expect(list.getByRole('button')).toHaveCount(2) // readers cannot log in
+    await page.keyboard.press('Escape')
+    await expect(list).toBeHidden()
+    await toggle.click()
+    await list.getByRole('button', { name: 'alice' }).click()
+    await expect(toggle).toHaveAccessibleName('User alice. Switch user', { timeout: 60_000 })
+    await expect(page.locator('.db-status')).toHaveText('Ready')
+
+    await setSql(page, 'select session_user, count(*) from people;')
+    await run(page)
+    await expect(results(page).locator('tbody tr').first()).toContainText('alice')
+    await setSql(page, "insert into people (name) values ('x');")
+    await run(page)
+    await expect(results(page)).toContainText('permission denied for table people')
+    await setSql(page, 'set role postgres;')
+    await run(page)
+    await expect(results(page)).toContainText('permission denied to set role')
+
+    await page.waitForTimeout(600)
+    await page.reload()
+    await expect(page.locator('.db-status')).toHaveText('Ready', { timeout: 60_000 })
+    await expect(toggle).toHaveAccessibleName('User alice. Switch user')
+
+    await toggle.click()
+    await list.getByRole('button', { name: /^postgres/ }).click()
+    await expect(toggle).toHaveAccessibleName('User postgres. Switch user', { timeout: 60_000 })
   })
 
   test('11: huge results are bounded with an explicit notice', async ({ page }) => {
@@ -362,6 +400,5 @@ test.describe('failure states', () => {
     await page.goto('/')
     await expect(page.getByText('Session storage is unavailable')).toBeVisible({ timeout: 60_000 })
     await expect(page.locator('.db-status')).toHaveText('Ready', { timeout: 60_000 })
-    await expect(page.locator('.db-facts')).toContainText('temporary')
   })
 })

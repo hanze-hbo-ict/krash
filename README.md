@@ -52,6 +52,12 @@ KRASH_E2E_DEV=1 npx playwright test tests/e2e/spike.spec.ts   # PGlite spike, ag
 - **Switching.** With two or more databases listed, click one to connect to it. Krash has one connection, so only the
   connected database shows its schemas. Switching reopens the engine, like psql's `\c`: committed data stays, and an
   open transaction is discarded (Krash asks first). Krash remembers the connected database across reloads.
+- **Users.** Once a second user exists (`CREATE USER name;`), the bottom of the Database pane shows the connected
+  user; click it to connect as another user. Like `\c - name` in psql, this starts a new session in the same
+  database, so the user's privileges apply to everything you run (an open transaction is discarded; Krash asks
+  first). Only roles that can log in are listed, so roles made with `CREATE ROLE` are not. Krash remembers the user
+  across reloads; Reset and Import connect as `postgres` again. There are no passwords: Krash connects as `postgres`
+  and then runs `SET SESSION AUTHORIZATION`, so this is for trying out privileges, not a security boundary.
 
 ## Deployment
 

@@ -7,7 +7,9 @@ import {
   hasUserRelations,
   introspectSchema,
   listDatabases,
+  listUsers,
   readDatasetMarker,
+  setSessionUser,
   SeedError,
   type Reconnect,
 } from '../../src/db/engine'
@@ -279,5 +281,34 @@ describe('schema introspection', () => {
     expect(pub.relations.find((r) => r.name === 'product_catalogue')!.kind).toBe('view')
     expect(pub.relations.find((r) => r.name === 'products')!.columns.find((c) => c.name === 'price')!.type).toBe('numeric(8,2)')
     expect(schema[1]!.relations[0]!.columns[1]!.references).toBe('public.customers(id)')
+  })
+})
+
+describe('users', () => {
+  it('lists login roles, switches the session user and enforces privileges', async () => {
+    const conn = await PGlite.create()
+    await executeScript(
+      conn,
+      `create table t (x int); insert into t values (1);
+       create user alice; create user bob; create role readers; grant select on t to alice;`,
+    )
+    expect(await listUsers(conn)).toEqual(['postgres', 'alice', 'bob'])
+    await expect(setSessionUser(conn, 'readers')).rejects.toThrow(/cannot log in/)
+    await expect(setSessionUser(conn, 'nobody')).rejects.toThrow(/does not exist/)
+
+    await setSessionUser(conn, 'alice')
+    const info = await introspectSchema(conn)
+    expect(info).toMatchObject({ user: 'alice', role: 'alice', users: ['postgres', 'alice', 'bob'] })
+    expect(info.namespaces[0]!.relations.map((r) => r.name)).toEqual(['t'])
+    expect((await executeScript(conn, 'select x from t')).results[0]!.rows).toEqual([['1']])
+    expect((await executeScript(conn, 'insert into t values (2)')).error?.message).toBe('permission denied for table t')
+    // Unlike SET ROLE (PGlite's own username option), RESET ROLE does not get back to postgres.
+    expect((await executeScript(conn, 'set role postgres')).error?.message).toMatch(/permission denied to set role/)
+    await executeScript(conn, 'reset role')
+    expect((await introspectSchema(conn)).role).toBe('alice')
+
+    await setSessionUser(conn, 'bob')
+    expect((await executeScript(conn, 'select x from t')).error?.message).toBe('permission denied for table t')
+    await conn.close()
   })
 })

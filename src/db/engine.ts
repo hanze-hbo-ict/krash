@@ -144,8 +144,11 @@ const KIND: Record<string, SchemaRelation['kind']> = {
 }
 
 export async function introspectSchema(db: PGlite): Promise<SchemaInfo> {
-  const current = await db.query<{ d: string }>(`select current_database() as d`)
+  const current = await db.query<{ d: string; u: string; r: string }>(
+    `select current_database() as d, session_user::text as u, current_user::text as r`,
+  )
   const allDatabases = await listDatabases(db)
+  const users = await listUsers(db)
   const nsRes = await db.query<{ schema: string }>(NAMESPACES_SQL)
   const res = await db.query<{
     schema: string
@@ -178,6 +181,9 @@ export async function introspectSchema(db: PGlite): Promise<SchemaInfo> {
   return {
     database: current.rows[0]?.d ?? '',
     allDatabases,
+    user: current.rows[0]?.u ?? '',
+    role: current.rows[0]?.r ?? '',
+    users,
     namespaces: [...byNs].map(([name, rels]) => ({ name, relations: [...rels.values()] })),
   }
 }
@@ -186,6 +192,31 @@ export async function introspectSchema(db: PGlite): Promise<SchemaInfo> {
 export async function listDatabases(db: PGlite): Promise<string[]> {
   const res = await db.query<{ d: string }>(`select datname::text as d from pg_database where not datistemplate order by 1`)
   return res.rows.map((r) => r.d)
+}
+
+/** Roles that can log in (CREATE USER, not CREATE ROLE), without the built-in pg_* roles. */
+export async function listUsers(db: PGlite): Promise<string[]> {
+  const res = await db.query<{ u: string }>(
+    `select rolname::text as u from pg_roles where rolcanlogin and rolname !~ '^pg_' order by rolname = 'postgres' desc, 1`,
+  )
+  return res.rows.map((r) => r.u)
+}
+
+/** The user (session_user) of this session. */
+export async function sessionUser(db: PGlite): Promise<string> {
+  return (await db.query<{ u: string }>(`select session_user::text as u`)).rows[0]?.u ?? 'postgres'
+}
+
+/**
+ * Continue this session as `user`, like connecting as that user. PGlite has no
+ * authentication; its own `username` option only does SET ROLE, which RESET ROLE
+ * undoes. SET SESSION AUTHORIZATION also changes session_user, so SET ROLE to a
+ * role the user is not a member of is refused, as in a real connection.
+ * (It is not a security boundary: the authenticated user is still postgres.)
+ */
+export async function setSessionUser(db: PGlite, user: string): Promise<void> {
+  if (!(await listUsers(db)).includes(user)) throw new Error(`The user “${user}” does not exist or cannot log in.`)
+  await db.exec(`set session authorization ${quoteIdent(user)}`)
 }
 
 /**

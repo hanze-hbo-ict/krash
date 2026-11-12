@@ -27,6 +27,7 @@ import { SchemaTree } from '../components/SchemaTree'
 import { ResultsPanel } from '../components/ResultsPanel'
 import { Splitter } from '../components/Splitter'
 import { ConfirmDialog, ImportDatabaseDialog, type ConfirmRequest } from '../components/Dialogs'
+import { UserMenu } from '../components/UserMenu'
 import { Icon, ThemeIcon } from '../components/Icon'
 import type { ErrorLocation, RunRecord } from './runTypes'
 import { txText } from './describe'
@@ -71,6 +72,8 @@ export function App() {
   const [importError, setImportError] = useState('')
   const [announce, setAnnounce] = useState('')
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
+  /** The user being connected as, shown in the footer until the switch has finished. */
+  const [pendingUser, setPendingUser] = useState<string | null>(null)
   const [importOpen, setImportOpen] = useState(false)
   const [theme, setTheme] = useState<ThemeChoice>(readTheme)
   const [base, setBase] = useState<BaseDataset>(BUNDLED)
@@ -132,8 +135,12 @@ export function App() {
         const shown = w.databases.filter((d) => next.allDatabases.includes(d))
         if (previous) for (const d of next.allDatabases) if (!previous.includes(d) && !shown.includes(d)) shown.push(d)
         if (!shown.includes(next.database)) shown.push(next.database)
-        const same = w.database === next.database && shown.length === w.databases.length && shown.every((d, i) => d === w.databases[i])
-        return same ? w : { ...w, database: next.database, databases: shown }
+        const same =
+          w.database === next.database &&
+          w.user === next.user &&
+          shown.length === w.databases.length &&
+          shown.every((d, i) => d === w.databases[i])
+        return same ? w : { ...w, database: next.database, user: next.user, databases: shown }
       })
     } catch {
       /* e.g. inside an aborted transaction: keep the previous tree */
@@ -149,14 +156,14 @@ export function App() {
   }, [])
 
   const openDb = useCallback(
-    async (dbName: string | null, database: string | null, context: 'boot' | 'restart') => {
+    async (dbName: string | null, database: string | null, user: string | null, context: 'boot' | 'restart') => {
       const c = client.current!
       setPhase(context === 'boot' ? 'starting' : 'restarting')
       try {
-        const i = await c.request({ type: 'init', dbName, dataset: baseRef.current, database })
+        const i = await c.request({ type: 'init', dbName, dataset: baseRef.current, database, user })
         handleInfo(i)
         knownDatabases.current = null
-        updateWs((w) => ({ ...w, database: i.database, databases: i.databases ?? w.databases }))
+        updateWs((w) => ({ ...w, database: i.database, user: i.user, databases: i.databases ?? w.databases }))
         setPhase('ready')
         await refreshSchema()
         return true
@@ -175,7 +182,7 @@ export function App() {
   /** After Stop or a crash: reopen the same database from its last saved state. */
   const restartAfterLoss = useCallback(async () => {
     const w = wsRef.current
-    if (w) await openDb(w.dbName, w.database, 'restart')
+    if (w) await openDb(w.dbName, w.database, w.user, 'restart')
   }, [openDb])
 
   // ---- Boot ----------------------------------------------------------------------
@@ -225,7 +232,7 @@ export function App() {
       setWs(w)
       saver.current!.schedule(w)
       saver.current!.flush()
-      await openDb(w.dbName, w.database, 'boot')
+      await openDb(w.dbName, w.database, w.user, 'boot')
       if (w.dbName) void cleanupOrphans(w)
     })()
 
@@ -364,7 +371,7 @@ export function App() {
     const oldName = w.dbName
     try {
       const i = await c.request({ type: 'createFresh', dbName: newName, dataset: next })
-      const nextWs = { ...w, dbName: newName, generation, database: i.database, databases: i.databases ?? [i.database] }
+      const nextWs = { ...w, dbName: newName, generation, database: i.database, user: i.user, databases: i.databases ?? [i.database] }
       knownDatabases.current = null
       setWs(nextWs)
       saver.current?.schedule(nextWs)
@@ -401,20 +408,22 @@ export function App() {
     }
   }
 
-  // ---- Switching databases (like psql's \c) ---------------------------------------------
-  const doConnect = async (database: string) => {
+  // ---- Switching databases and users (like psql's \c database user) -----------------------
+  const doConnect = async (database: string, user: string) => {
     const c = client.current
     if (!c || phase !== 'ready') return
+    const what = user === wsRef.current?.user ? database : `${database} as ${user}`
+    if (user !== wsRef.current?.user) setPendingUser(user)
     setPhase('connecting')
-    setAnnounce(`Connecting to ${database}…`)
+    setAnnounce(`Connecting to ${what}…`)
     try {
-      const i = await c.request({ type: 'connect', database })
+      const i = await c.request({ type: 'connect', database, user })
       handleInfo(i)
       knownDatabases.current = null
-      updateWs((w) => ({ ...w, database: i.database }))
+      updateWs((w) => ({ ...w, database: i.database, user: i.user }))
       setLastRun(null)
       setPhase('ready')
-      setAnnounce(`Connected to ${i.database}.`)
+      setAnnounce(`Connected to ${i.database} as ${i.user}.`)
       await refreshSchema()
     } catch (err) {
       const f = err instanceof DbFailure ? err.failure : { kind: 'internal' as const, message: String(err) }
@@ -425,23 +434,36 @@ export function App() {
         startedAt: Date.now(),
         status: 'done',
         outcome: null,
-        failure: { kind: f.kind, message: `Could not connect to ${database}: ${f.message}` },
+        failure: { kind: f.kind, message: `Could not connect to ${what}: ${f.message}` },
         errorLocation: null,
       })
       // The worker reconnects to the previous database when it can; otherwise restart it.
-      await openDb(wsRef.current?.dbName ?? null, wsRef.current?.database ?? null, 'restart')
+      await openDb(wsRef.current?.dbName ?? null, wsRef.current?.database ?? null, wsRef.current?.user ?? null, 'restart')
+    } finally {
+      setPendingUser(null)
     }
   }
 
-  const connectTo = (database: string) => {
-    if (txStatus === 'I') return void doConnect(database)
+  const connectTo = (database: string, user = wsRef.current?.user ?? 'postgres') => {
+    if (txStatus === 'I') return void doConnect(database, user)
+    const otherUser = user !== wsRef.current?.user
     setConfirm({
-      title: `Connect to ${database}?`,
-      body: <p>A transaction is open. Connecting to another database ends this session, so its uncommitted changes are discarded.</p>,
+      title: otherUser ? `Connect as ${user}?` : `Connect to ${database}?`,
+      body: (
+        <p>
+          A transaction is open. Connecting {otherUser ? 'as another user' : 'to another database'} ends this session, so its uncommitted
+          changes are discarded.
+        </p>
+      ),
       confirmLabel: 'Connect',
       danger: true,
-      onConfirm: () => void doConnect(database),
+      onConfirm: () => void doConnect(database, user),
     })
+  }
+
+  const switchUser = (user: string) => {
+    const w = wsRef.current
+    if (w && user !== w.user) connectTo(w.database, user)
   }
 
   const askResetDb = () =>
@@ -538,7 +560,7 @@ export function App() {
       <FailurePanel
             failure={failure}
             persistent={!!ws?.dbName}
-            onRetry={() => void openDb(wsRef.current?.dbName ?? null, wsRef.current?.database ?? null, 'boot')}
+            onRetry={() => void openDb(wsRef.current?.dbName ?? null, wsRef.current?.database ?? null, wsRef.current?.user ?? null, 'boot')}
             onNewDb={async () => {
               const w = wsRef.current
               if (!w) return
@@ -548,7 +570,7 @@ export function App() {
               saver.current?.schedule(next)
               saver.current?.flush()
               const old = w.dbName
-              if (await openDb(next.dbName, null, 'boot')) {
+              if (await openDb(next.dbName, null, null, 'boot')) {
                 if (old) await client.current?.request({ type: 'dropDatabase', dbName: old }).catch(() => {})
               }
             }}
@@ -558,7 +580,7 @@ export function App() {
               const next = { ...w, dbName: null }
               setWs(next)
               saver.current?.schedule(next)
-              await openDb(null, null, 'boot')
+              await openDb(null, null, null, 'boot')
             }}
           />
     ) : null
@@ -658,20 +680,15 @@ export function App() {
                   unavailable={phase === 'failed'}
                   onConnect={phase === 'ready' ? connectTo : undefined}
                 />
-                <div className="db-panel-footer">
-                  <p className="db-facts">
-                    {info ? (
-                      <>
-                        PostgreSQL {info.postgresVersion} · {base.name}
-                        {!info.persistent && ' · temporary'}
-                      </>
-                    ) : phase === 'failed' ? (
-                      'Not running'
-                    ) : (
-                      'Starting…'
-                    )}
-                  </p>
-                </div>
+                {schema && schema.users.length > 1 && (
+                  <div className="db-panel-footer">
+                    <UserMenu
+                      users={schema.users}
+                      current={pendingUser ?? schema.user}
+                      onSwitch={phase === 'ready' && !pendingUser ? switchUser : undefined}
+                    />
+                  </div>
+                )}
               </div>
             </aside>
 

@@ -42,6 +42,7 @@ export function createWorkspace(persistent: boolean, ui: UiPrefs = DEFAULT_UI): 
     generation: 1,
     sql: '',
     database: 'postgres',
+    user: 'postgres',
     databases: ['postgres'],
     ui: { ...ui },
   }
@@ -90,6 +91,7 @@ export function parseWorkspace(raw: string | null): Workspace | null {
     generation,
     sql: sql.slice(0, MAX_SQL_LENGTH),
     database: typeof v.database === 'string' && isDbName(v.database) ? v.database : 'postgres',
+    user: typeof v.user === 'string' && isDbName(v.user) ? v.user : 'postgres',
     databases: Array.isArray(v.databases) && v.databases.every(isDbName) && v.databases.length > 0 ? (v.databases as string[]).slice(0, 100) : ['postgres'],
     ui: {
       sidebarCollapsed: typeof ui.sidebarCollapsed === 'boolean' ? ui.sidebarCollapsed : DEFAULT_UI.sidebarCollapsed,
