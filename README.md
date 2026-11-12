@@ -247,3 +247,5 @@ Built with [PGlite](https://pglite.dev) by Electric SQL (Apache-2.0, includes Po
 License), [CodeMirror 6](https://codemirror.net) (MIT) and [React](https://react.dev) (MIT). `npm run build`
 regenerates the full list in `public/THIRD_PARTY_NOTICES.txt`, which the app links from its footer. The visual
 language is inspired by [Klode](https://github.com/hanze-hbo-ict/klode) and Kopje; no code or assets were copied.
+
+Krash itself is released under the [MIT License](LICENSE.md).
