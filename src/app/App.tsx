@@ -29,7 +29,7 @@ import { ResultsPanel } from '../components/ResultsPanel'
 import { Splitter } from '../components/Splitter'
 import { ConfirmDialog, ImportDatabaseDialog, type ConfirmRequest } from '../components/Dialogs'
 import { UserMenu } from '../components/UserMenu'
-import { Icon, ThemeIcon } from '../components/Icon'
+import { Icon, RunQueryIcon, ThemeIcon } from '../components/Icon'
 import type { ErrorLocation, RunRecord } from './runTypes'
 import { txText } from './describe'
 
@@ -704,12 +704,12 @@ export function App() {
                     <>
                       <button
                         type="button"
-                        className="run-all"
+                        className="run-script"
                         onClick={() => void run('all')}
                         disabled={phase !== 'ready'}
-                        title="Run everything in the editor, or the selection (Ctrl/⌘ + Shift + Enter)"
+                        title="Run everything in the editor as one script, or the selection (Ctrl/⌘ + Shift + Enter)"
                       >
-                        <Icon name="play-all" /> Run all
+                        <Icon name="play" /> Run script
                       </button>
                       <button
                         type="button"
@@ -719,7 +719,7 @@ export function App() {
                         disabled={phase !== 'ready'}
                         title="Run the query the cursor is in, or the selection (Ctrl/⌘ + Enter)"
                       >
-                        <Icon name="play" /> Run query
+                        <RunQueryIcon /> Run query
                       </button>
                     </>
                   )}

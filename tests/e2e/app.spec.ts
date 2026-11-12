@@ -29,7 +29,7 @@ async function editorText(page: Page): Promise<string> {
 
 /** Run everything in the editor. */
 async function run(page: Page) {
-  await page.getByRole('button', { name: 'Run all', exact: true }).click()
+  await page.getByRole('button', { name: 'Run script', exact: true }).click()
   await expect(page.locator('.db-status')).not.toHaveText('Running…')
 }
 
@@ -98,7 +98,7 @@ test.describe('Krash', () => {
     await expect(results(page).locator('tbody tr')).toHaveCount(1)
   })
 
-  test('5: Run query runs the query at the cursor, Run all everything, a selection wins for both', async ({ page }) => {
+  test('5: Run query runs the query at the cursor, Run script everything, a selection wins for both', async ({ page }) => {
     await open(page)
     await setSql(page, 'select 111 as first;\n\nselect 222 as second;\nselect 333 as third;')
     const firstCell = results(page).locator('tbody td').first()
@@ -128,7 +128,7 @@ test.describe('Krash', () => {
     await page.locator('.cm-content').click()
     await page.keyboard.press(`${MOD}+End`)
     await page.keyboard.press('Shift+Home')
-    await page.getByRole('button', { name: 'Run all', exact: true }).click()
+    await page.getByRole('button', { name: 'Run script', exact: true }).click()
     await ready()
     await expect(firstCell).toHaveText('333')
     await expect(resultTabs).toHaveCount(1)
@@ -415,7 +415,7 @@ test.describe('failure states', () => {
     await setSql(page, 'select 1;')
     await expect.poll(() => editorText(page)).toBe('select 1;')
     await expect(page.getByRole('button', { name: 'Run query', exact: true })).toBeDisabled()
-    await expect(page.getByRole('button', { name: 'Run all', exact: true })).toBeDisabled()
+    await expect(page.getByRole('button', { name: 'Run script', exact: true })).toBeDisabled()
   })
 
   test('12: blocked session storage is reported prominently', async ({ page }) => {

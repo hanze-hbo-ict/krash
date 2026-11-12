@@ -7,7 +7,6 @@ const PATHS: Record<string, string[]> = {
   reset: ['M4.2 13.7A8 8 0 1 0 6.5 6.2L4 9', 'M4 4v5h5'],
   sidebar: ['M4 5h16v14H4z', 'M9 5v14'],
   play: ['M8 5.5v13l10-6.5-10-6.5Z'],
-  'play-all': ['M5 5.5v13l8-6.5-8-6.5Z', 'M13 5.5v13l8-6.5-8-6.5Z'],
   stop: ['M7 7h10v10H7z'],
   user: ['M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z', 'M5 20a7 7 0 0 1 14 0'],
 }
@@ -19,6 +18,16 @@ export function Icon({ name, size }: { name: keyof typeof PATHS | string; size?:
       {paths.map((d) => (
         <path key={d} d={d} />
       ))}
+    </svg>
+  )
+}
+
+/** Run query: a filled play triangle with a small stroked "1" (one statement), as in pgAdmin. */
+export function RunQueryIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" className="icon icon-run-query">
+      <path d="M2.5 6.4v11.2l8.6-5.6Z" fill="currentColor" stroke="none" />
+      <path d="M14.5 13.5l3-2.5v8.5" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }
