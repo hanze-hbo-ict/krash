@@ -30,7 +30,14 @@ export interface MessageLine {
 
 export function describeOutcome(run: RunRecord, o: ExecuteOutcome): MessageLine[] {
   const out: MessageLine[] = []
-  const where = run.isSelection ? `Selected text (lines ${run.lines.from}–${run.lines.to})` : 'The query'
+  const where =
+    run.scope === 'selection'
+      ? `Selected text (lines ${run.lines.from}–${run.lines.to})`
+      : run.scope === 'statement'
+        ? run.lines.from === run.lines.to
+          ? `The query on line ${run.lines.from}`
+          : `The query on lines ${run.lines.from}–${run.lines.to}`
+        : 'The script'
   out.push({
     level: 'info',
     label: 'Run',

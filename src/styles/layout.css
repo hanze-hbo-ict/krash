@@ -666,6 +666,14 @@ main {
 #run[data-action='stop']:hover:enabled {
   background: var(--stop-hover);
 }
+.run-all {
+  justify-content: center;
+}
+.run-all .icon {
+  width: 14px;
+  height: 12px;
+  fill: currentColor;
+}
 #run:disabled {
   background: var(--soft);
   border-color: var(--line);

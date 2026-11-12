@@ -23,7 +23,7 @@ for (const scheme of ['light', 'dark'] as const) {
     await page.locator('.cm-content').click()
     await page.keyboard.press(`${MOD}+A`)
     await page.keyboard.insertText("select id, name, born from people order by id;\nselect 1/0;")
-    await page.keyboard.press(`${MOD}+Enter`)
+    await page.keyboard.press(`${MOD}+Shift+Enter`)
     await expect(page.locator('#results-body').getByRole('alert')).toBeVisible()
     await axe(page)
     await page.getByRole('button', { name: 'Import database' }).click()
@@ -54,7 +54,7 @@ test('Clear workspace removes the query and the database, then starts fresh', as
   await page.locator('.cm-content').click()
   await page.keyboard.press(`${MOD}+A`)
   await page.keyboard.insertText('create table gone_t (x int);')
-  await page.getByRole('button', { name: 'Run', exact: true }).click()
+  await page.getByRole('button', { name: 'Run query', exact: true }).click()
   await expect(page.locator('.schema-tree').getByText('gone_t', { exact: true })).toBeVisible()
   const before = await page.evaluate(() => JSON.parse(sessionStorage.getItem('krash:v1:workspace')!).dbName as string)
 

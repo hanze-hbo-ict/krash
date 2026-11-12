@@ -33,8 +33,11 @@ KRASH_E2E_DEV=1 npx playwright test tests/e2e/spike.spec.ts   # PGlite spike, ag
 
 ## Using Krash
 
-- **One query editor.** Keep several statements in it and run them one at a time by selecting them.
-- **Run.** Ctrl/⌘ + Enter or **Run** runs the selection, or the whole query if nothing is selected.
+- **One query editor.** Keep several statements in it. A new workspace starts with `SELECT * FROM people;`.
+- **Run query** (Ctrl/⌘ + Enter) runs the statement the cursor is in. Right after a `;` that is the statement it ends;
+  on a blank line between statements, the one before it.
+- **Run all** (Ctrl/⌘ + Shift + Enter) runs everything in the editor as one script.
+- **Selection.** If text is selected, both buttons run exactly the selection (as in pgAdmin), e.g. a subquery.
 - **Database pane.** A read-only tree of databases, schemas, tables and columns, plus three actions in its header:
   - **Reset** restores the last imported database. Until something is imported, that is the default database.
   - **Clear** clears the whole workspace: it deletes the query and this tab's database and starts fresh with the default

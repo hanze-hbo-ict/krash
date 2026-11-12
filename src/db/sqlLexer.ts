@@ -4,8 +4,9 @@
  * where top-level statements end. It is used for two things only:
  *  - refusing `COPY ... FROM STDIN`, which hangs/aborts the embedded engine;
  *  - splitting an imported script at its `CREATE DATABASE` statements, so each
- *    section can run connected to its own database (like psql's `\c`).
- * A Run from the editor is always sent to PostgreSQL unchanged, as one script.
+ *    section can run connected to its own database (like psql's `\c`);
+ *  - finding the statement at the cursor for "Run query".
+ * What is run is always sent to PostgreSQL unchanged, as one script.
  */
 
 export interface Word {
@@ -98,6 +99,33 @@ export function lexStatements(sql: string): Statement[] {
     } else i++
   }
   return statements
+}
+
+/**
+ * The statement to run for a cursor at `cursor`: the statement whose text
+ * (from its first non-blank character, which may be a comment, to its `;`)
+ * contains the cursor; just after a `;` that is the statement it ends. A cursor
+ * in the blank space between statements picks the statement before it, or the
+ * first one if there is none. Null if the text has no statements at all.
+ */
+export function statementAt(sql: string, cursor: number): { start: number; end: number } | null {
+  const ranges = lexStatements(sql)
+    .filter((s) => s.words.length > 0)
+    .map((s) => {
+      let start = s.start
+      while (start < s.end && /\s/.test(sql[start]!)) start++
+      let end = s.end
+      while (end > start && /\s/.test(sql[end - 1]!)) end--
+      return { start, end }
+    })
+  if (ranges.length === 0) return null
+  let pick = ranges[0]!
+  for (const r of ranges) {
+    if (r.start > cursor) break
+    pick = r
+    if (r.end >= cursor) break
+  }
+  return pick
 }
 
 export interface ScriptSection {

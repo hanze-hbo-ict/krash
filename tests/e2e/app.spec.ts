@@ -27,8 +27,9 @@ async function editorText(page: Page): Promise<string> {
   })
 }
 
+/** Run everything in the editor. */
 async function run(page: Page) {
-  await page.getByRole('button', { name: 'Run', exact: true }).click()
+  await page.getByRole('button', { name: 'Run all', exact: true }).click()
   await expect(page.locator('.db-status')).not.toHaveText('Running…')
 }
 
@@ -42,7 +43,7 @@ test.describe('Krash', () => {
     await expect(page.getByRole('heading', { name: 'Query', exact: true })).toBeVisible()
     // A new workspace starts with a query on the default table.
     await expect.poll(() => editorText(page)).toBe('SELECT * FROM people;\n')
-    await page.getByRole('button', { name: 'Run', exact: true }).click()
+    await page.getByRole('button', { name: 'Run query', exact: true }).click()
     await expect(page.getByRole('tab', { name: /Result · 3 rows/ })).toBeVisible()
 
     await setSql(page, 'select count(*) as n from people;')
@@ -97,16 +98,40 @@ test.describe('Krash', () => {
     await expect(results(page).locator('tbody tr')).toHaveCount(1)
   })
 
-  test('5: Ctrl/Cmd+Enter runs only the selection', async ({ page }) => {
+  test('5: Run query runs the query at the cursor, Run all everything, a selection wins for both', async ({ page }) => {
     await open(page)
-    await setSql(page, 'select 111 as first;\nselect 222 as second;')
-    // Select the second line with the keyboard.
+    await setSql(page, 'select 111 as first;\n\nselect 222 as second;\nselect 333 as third;')
+    const firstCell = results(page).locator('tbody td').first()
+    const ready = () => expect(page.locator('.db-status')).toHaveText('Ready')
+    const resultTabs = page.getByRole('tab').filter({ hasNotText: 'Messages' })
+
+    // Cursor at the end of the text: the last query.
+    await page.keyboard.press(`${MOD}+Enter`)
+    await ready()
+    await expect(firstCell).toHaveText('333')
+    await expect(page.locator('.run-meta')).toContainText('Query')
+    await expect(resultTabs).toHaveCount(1)
+
+    // Cursor in the first query (start of the text).
+    await page.keyboard.press(`${MOD}+Home`)
+    await page.getByRole('button', { name: 'Run query', exact: true }).click()
+    await ready()
+    await expect(firstCell).toHaveText('111')
+
+    // Everything.
+    await page.keyboard.press(`${MOD}+Shift+Enter`)
+    await ready()
+    await expect(resultTabs).toHaveCount(3)
+    await expect(page.locator('.run-meta')).toContainText('All')
+
+    // A selection (the third line) wins for both buttons.
+    await page.locator('.cm-content').click()
     await page.keyboard.press(`${MOD}+End`)
     await page.keyboard.press('Shift+Home')
-    await page.keyboard.press(`${MOD}+Enter`)
-    await expect(page.locator('.db-status')).toHaveText('Ready')
-    await expect(results(page).locator('tbody td').first()).toHaveText('222')
-    await expect(page.getByRole('tab', { name: /Result · 1 row/ })).toBeVisible()
+    await page.getByRole('button', { name: 'Run all', exact: true }).click()
+    await ready()
+    await expect(firstCell).toHaveText('333')
+    await expect(resultTabs).toHaveCount(1)
     await expect(page.locator('.run-meta')).toContainText('Selection')
   })
 
@@ -325,7 +350,7 @@ test.describe('Krash', () => {
     await setSql(page, 'create table before_stop (x int); insert into before_stop values (7);')
     await run(page)
     await setSql(page, 'select count(*) from generate_series(1, 3000000000);')
-    await page.getByRole('button', { name: 'Run', exact: true }).click()
+    await page.getByRole('button', { name: 'Run query', exact: true }).click()
     await page.getByRole('button', { name: 'Stop' }).click()
     await expect(results(page).getByRole('alert')).toContainText('this run and any open transaction were discarded')
     await expect(page.locator('.db-status')).toHaveText('Ready', { timeout: 60_000 })
@@ -389,7 +414,8 @@ test.describe('failure states', () => {
     await expect(page.getByText('Your query is safe')).toBeVisible()
     await setSql(page, 'select 1;')
     await expect.poll(() => editorText(page)).toBe('select 1;')
-    await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeDisabled()
+    await expect(page.getByRole('button', { name: 'Run query', exact: true })).toBeDisabled()
+    await expect(page.getByRole('button', { name: 'Run all', exact: true })).toBeDisabled()
   })
 
   test('12: blocked session storage is reported prominently', async ({ page }) => {

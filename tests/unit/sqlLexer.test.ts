@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { findCopyFromStdin, lexWords, offsetToLineCol, pgPositionToOffset, splitByCreateDatabase } from '../../src/db/sqlLexer'
+import { findCopyFromStdin, lexWords, offsetToLineCol, pgPositionToOffset, splitByCreateDatabase, statementAt } from '../../src/db/sqlLexer'
 
 describe('findCopyFromStdin', () => {
   it('detects COPY ... FROM STDIN in any case', () => {
@@ -61,5 +61,29 @@ describe('splitByCreateDatabase', () => {
     expect(s).toHaveLength(2)
     expect(s[0]!.hasStatements).toBe(false)
     expect(s[1]!.createDatabase).toBe('create database shop;')
+  })
+})
+
+describe('statementAt', () => {
+  const at = (sql: string, cursor: number) => {
+    const r = statementAt(sql, cursor)
+    return r && sql.slice(r.start, r.end)
+  }
+  const sql = 'select 1;\n\n-- second\nselect 2;select 3\n'
+  it('picks the statement around the cursor, including its leading comment', () => {
+    expect(at(sql, 3)).toBe('select 1;')
+    expect(at(sql, sql.indexOf('2'))).toBe('-- second\nselect 2;')
+    expect(at(sql, sql.length)).toBe('select 3')
+  })
+  it('prefers the statement that ends at the cursor, then the one before a gap', () => {
+    expect(at(sql, sql.indexOf('select 3'))).toBe('-- second\nselect 2;')
+    expect(at(sql, sql.indexOf('\n\n') + 1)).toBe('select 1;')
+    expect(at('\n\nselect 1;', 0)).toBe('select 1;')
+  })
+  it('does not split inside strings or dollar bodies, and ignores comment-only text', () => {
+    const body = "select ';' as a, $$;$$ as b;"
+    expect(at(body, 5)).toBe(body)
+    expect(statementAt('-- nothing;\n', 2)).toBeNull()
+    expect(statementAt('', 0)).toBeNull()
   })
 })

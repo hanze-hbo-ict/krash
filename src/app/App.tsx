@@ -23,7 +23,7 @@ import {
 import { acquireSessionLock } from '../workspace/sessionLock'
 import { randomId } from '../workspace/ids'
 import { bundledBase, clearBase, importedBase, loadBase, saveBase, type BaseDataset } from '../workspace/baseDataset'
-import { SqlEditor, type SqlEditorHandle } from '../components/SqlEditor'
+import { SqlEditor, type RunMode, type SqlEditorHandle } from '../components/SqlEditor'
 import { SchemaTree } from '../components/SchemaTree'
 import { ResultsPanel } from '../components/ResultsPanel'
 import { Splitter } from '../components/Splitter'
@@ -290,18 +290,18 @@ export function App() {
   const onEdit = useCallback((text: string) => updateWs((w) => (w.sql === text ? w : { ...w, sql: text })), [updateWs])
 
   // ---- Running SQL -------------------------------------------------------------------
-  const run = useCallback(async () => {
+  const run = useCallback(async (mode: RunMode) => {
     const c = client.current
     const w = wsRef.current
     if (!c || !w || phase !== 'ready' || !editor.current) return
-    const target = editor.current.getRunTarget()
+    const target = editor.current.getRunTarget(mode)
     const id = ++runCounter.current
     activeRun.current = id
     const fromLine = offsetToLineCol(target.docText, target.offset).line
     const toLine = offsetToLineCol(target.docText, target.offset + target.sql.length).line
     const record: RunRecord = {
       id,
-      isSelection: target.isSelection,
+      scope: target.scope,
       lines: { from: fromLine, to: toLine },
       startedAt: Date.now(),
       status: 'running',
@@ -344,13 +344,13 @@ export function App() {
     void restartAfterLoss()
   }
 
-  // Ctrl/Cmd+Enter outside the editor (e.g. on a tab or in results).
+  // Ctrl/Cmd+Enter (query) and Ctrl/Cmd+Shift+Enter (all) outside the editor, e.g. in the results.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Enter' || !(e.ctrlKey || e.metaKey) || e.defaultPrevented) return
       if ((e.target as HTMLElement | null)?.closest('dialog, input, textarea')) return
       e.preventDefault()
-      void run()
+      void run(e.shiftKey ? 'all' : 'statement')
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -397,7 +397,7 @@ export function App() {
       if (mode === 'reset') {
         setLastRun({
           id: ++runCounter.current,
-          isSelection: false,
+          scope: 'all',
           lines: { from: 1, to: 1 },
           startedAt: Date.now(),
           status: 'done',
@@ -431,7 +431,7 @@ export function App() {
       const f = err instanceof DbFailure ? err.failure : { kind: 'internal' as const, message: String(err) }
       setLastRun({
         id: ++runCounter.current,
-        isSelection: false,
+        scope: 'all',
         lines: { from: 1, to: 1 },
         startedAt: Date.now(),
         status: 'done',
@@ -707,21 +707,32 @@ export function App() {
                       <Icon name="stop" /> Stop
                     </button>
                   ) : (
-                    <button
-                      type="button"
-                      id="run"
-                      data-action="run"
-                      onClick={() => void run()}
-                      disabled={phase !== 'ready'}
-                      title="Run the selection, or the whole query (Ctrl/⌘ + Enter)"
-                    >
-                      <Icon name="play" /> Run
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        className="run-all"
+                        onClick={() => void run('all')}
+                        disabled={phase !== 'ready'}
+                        title="Run everything in the editor, or the selection (Ctrl/⌘ + Shift + Enter)"
+                      >
+                        <Icon name="play-all" /> Run all
+                      </button>
+                      <button
+                        type="button"
+                        id="run"
+                        data-action="run"
+                        onClick={() => void run('statement')}
+                        disabled={phase !== 'ready'}
+                        title="Run the query the cursor is in, or the selection (Ctrl/⌘ + Enter)"
+                      >
+                        <Icon name="play" /> Run query
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
               <div className="editor-body" id="editor-body">
-                {ws && <SqlEditor ref={editor} initialText={ws.sql} label="SQL query" onChange={onEdit} onRun={() => void run()} />}
+                {ws && <SqlEditor ref={editor} initialText={ws.sql} label="SQL query" onChange={onEdit} onRun={(mode) => void run(mode)} />}
               </div>
             </section>
             <Splitter

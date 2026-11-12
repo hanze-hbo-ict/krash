@@ -7,6 +7,7 @@ const PATHS: Record<string, string[]> = {
   reset: ['M4.2 13.7A8 8 0 1 0 6.5 6.2L4 9', 'M4 4v5h5'],
   sidebar: ['M4 5h16v14H4z', 'M9 5v14'],
   play: ['M8 5.5v13l10-6.5-10-6.5Z'],
+  'play-all': ['M5 5.5v13l8-6.5-8-6.5Z', 'M13 5.5v13l8-6.5-8-6.5Z'],
   stop: ['M7 7h10v10H7z'],
   user: ['M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z', 'M5 20a7 7 0 0 1 14 0'],
 }

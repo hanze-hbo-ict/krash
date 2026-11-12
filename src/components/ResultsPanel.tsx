@@ -100,7 +100,7 @@ function messagesLabel(run: RunRecord | null): string {
 
 function runMeta(run: RunRecord): string {
   const o = run.outcome!
-  const parts = [run.isSelection ? 'Selection' : 'Query', `${o.durationMs} ms`]
+  const parts = [{ selection: 'Selection', statement: 'Query', all: 'All' }[run.scope], `${o.durationMs} ms`]
   return parts.join(' · ')
 }
 

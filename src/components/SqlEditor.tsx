@@ -18,6 +18,7 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { bracketMatching, HighlightStyle, indentOnInput, syntaxHighlighting } from '@codemirror/language'
 import { PostgreSQL, sql } from '@codemirror/lang-sql'
 import { tags as t } from '@lezer/highlight'
+import { statementAt } from '../db/sqlLexer'
 
 const highlight = HighlightStyle.define([
   { tag: [t.keyword, t.operatorKeyword, t.modifier], color: 'var(--syntax-keyword)' },
@@ -47,8 +48,12 @@ const theme = EditorView.theme({
 
 export interface SqlEditorHandle {
   focus(): void
-  /** The selected text if non-empty, else the whole document, with its start offset. */
-  getRunTarget(): { sql: string; offset: number; isSelection: boolean; docText: string }
+  /**
+   * What to run, with its start offset: the selected text if there is any (for
+   * both modes, as in pgAdmin), else the statement at the cursor ("statement")
+   * or the whole document ("all").
+   */
+  getRunTarget(mode: RunMode): { sql: string; offset: number; scope: 'selection' | 'statement' | 'all'; docText: string }
   /** Place the cursor at an offset (used for "go to error position"). */
   moveTo(offset: number): void
 }
@@ -57,8 +62,10 @@ interface Props {
   initialText: string
   label: string
   onChange: (text: string) => void
-  onRun: () => void
+  onRun: (mode: RunMode) => void
 }
+
+export type RunMode = 'statement' | 'all'
 
 export const SqlEditor = forwardRef<SqlEditorHandle, Props>(function SqlEditor(
   { initialText, label, onChange, onRun },
@@ -88,7 +95,15 @@ export const SqlEditor = forwardRef<SqlEditorHandle, Props>(function SqlEditor(
           key: 'Mod-Enter',
           preventDefault: true,
           run: () => {
-            onRunRef.current()
+            onRunRef.current('statement')
+            return true
+          },
+        },
+        {
+          key: 'Shift-Mod-Enter',
+          preventDefault: true,
+          run: () => {
+            onRunRef.current('all')
             return true
           },
         },
@@ -128,15 +143,19 @@ export const SqlEditor = forwardRef<SqlEditorHandle, Props>(function SqlEditor(
 
   useImperativeHandle(ref, () => ({
     focus: () => view.current?.focus(),
-    getRunTarget: () => {
+    getRunTarget: (mode) => {
       const v = view.current
-      if (!v) return { sql: '', offset: 0, isSelection: false, docText: '' }
+      if (!v) return { sql: '', offset: 0, scope: mode, docText: '' }
       const docText = v.state.doc.toString()
       const sel = v.state.selection.main
       if (!sel.empty && docText.slice(sel.from, sel.to).trim() !== '') {
-        return { sql: docText.slice(sel.from, sel.to), offset: sel.from, isSelection: true, docText }
+        return { sql: docText.slice(sel.from, sel.to), offset: sel.from, scope: 'selection', docText }
       }
-      return { sql: docText, offset: 0, isSelection: false, docText }
+      if (mode === 'statement') {
+        const st = statementAt(docText, sel.head)
+        if (st) return { sql: docText.slice(st.start, st.end), offset: st.start, scope: 'statement', docText }
+      }
+      return { sql: docText, offset: 0, scope: mode, docText }
     },
     moveTo: (offset: number) => {
       const v = view.current
