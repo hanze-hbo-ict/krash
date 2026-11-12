@@ -8,6 +8,7 @@ import { offsetToLineCol, pgPositionToOffset } from '../db/sqlLexer'
 import type { ThemeChoice, Workspace } from '../workspace/types'
 import {
   createWorkspace,
+  DEFAULT_QUERY,
   findOrphans,
   HEARTBEAT_INTERVAL_MS,
   loadWorkspace,
@@ -263,7 +264,8 @@ export function App() {
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
       saver.current?.flush()
-      if (wsRef.current?.sql.trim()) {
+      const sql = wsRef.current?.sql.trim()
+      if (sql && sql !== DEFAULT_QUERY.trim()) {
         e.preventDefault()
         e.returnValue = ''
       }

@@ -33,6 +33,9 @@ export function safeStorage(kind: 'session' | 'local'): Storage | null {
   }
 }
 
+/** The query a new workspace starts with (the default database has this table). */
+export const DEFAULT_QUERY = 'SELECT * FROM people;\n'
+
 export function createWorkspace(persistent: boolean, ui: UiPrefs = DEFAULT_UI): Workspace {
   const sessionId = randomId(16)
   return {
@@ -40,7 +43,7 @@ export function createWorkspace(persistent: boolean, ui: UiPrefs = DEFAULT_UI): 
     sessionId,
     dbName: persistent ? dbNameFor(sessionId, 1) : null,
     generation: 1,
-    sql: '',
+    sql: DEFAULT_QUERY,
     database: 'postgres',
     user: 'postgres',
     databases: ['postgres'],

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   createWorkspace,
+  DEFAULT_QUERY,
   findOrphans,
   loadWorkspace,
   ORPHAN_AFTER_MS,
@@ -25,9 +26,9 @@ class MemoryStorage implements Storage {
 }
 
 describe('workspace persistence', () => {
-  it('creates an empty workspace', () => {
+  it('creates a workspace with the default query', () => {
     const ws = createWorkspace(true)
-    expect(ws.sql).toBe('')
+    expect(ws.sql).toBe(DEFAULT_QUERY)
     expect(ws.dbName).toBe(`krash-${ws.sessionId}-1`)
     expect(createWorkspace(false).dbName).toBeNull()
   })

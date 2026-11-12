@@ -40,7 +40,10 @@ test.describe('Krash', () => {
     const tree = page.locator('.schema-tree')
     await expect(tree.getByText('people', { exact: true })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Query', exact: true })).toBeVisible()
-    await expect.poll(() => editorText(page)).toBe('')
+    // A new workspace starts with a query on the default table.
+    await expect.poll(() => editorText(page)).toBe('SELECT * FROM people;\n')
+    await page.getByRole('button', { name: 'Run', exact: true }).click()
+    await expect(page.getByRole('tab', { name: /Result · 3 rows/ })).toBeVisible()
 
     await setSql(page, 'select count(*) as n from people;')
     await run(page)
@@ -120,13 +123,13 @@ test.describe('Krash', () => {
     await expect(results(page).locator('tbody td').first()).toHaveText('42')
   })
 
-  test('8: a new browser tab gets its own fresh database and an empty query', async ({ page, context }) => {
+  test('8: a new browser tab gets its own fresh database and the default query', async ({ page, context }) => {
     await open(page)
     await setSql(page, 'create table only_here (x int);')
     await run(page)
     const other = await context.newPage()
     await open(other)
-    await expect.poll(() => editorText(other)).toBe('')
+    await expect.poll(() => editorText(other)).toBe('SELECT * FROM people;\n')
     await setSql(other, "select to_regclass('only_here') is null as absent;")
     await run(other)
     await expect(results(other).locator('tbody td').first()).toHaveText('t')
@@ -180,7 +183,7 @@ test.describe('Krash', () => {
     await expect(tree.getByText('people', { exact: true })).toHaveCount(0)
     // Answers are kept and nothing ran.
     await expect.poll(() => editorText(page)).toBe('select count(*) from imported_t;')
-    await expect(results(page)).toContainText('Results appear here')
+    await expect(results(page)).toHaveText('')
 
     await setSql(page, 'delete from imported_t;')
     await run(page)
@@ -333,7 +336,7 @@ test.describe('Krash', () => {
 
   test('13: no completion popups or assistance', async ({ page }) => {
     await open(page)
-    await page.locator('.cm-content').click()
+    await setSql(page, '')
     await page.keyboard.type('sel')
     await page.waitForTimeout(500)
     await page.keyboard.press('Control+Space')

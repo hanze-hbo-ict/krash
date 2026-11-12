@@ -79,7 +79,6 @@ export function ResultsPanel({ run, onGoToError, blocking }: Props) {
       </div>
       <div className="results-body" id="results-body" role="tabpanel" tabIndex={0} aria-label="Result details">
         {blocking}
-        {!run && !blocking && <p className="placeholder">Run SQL with the Run button or Ctrl/⌘ + Enter. Results appear here.</p>}
         {run?.status === 'running' && <p className="placeholder">Running…</p>}
         {run && <ErrorBox run={run} onGoToError={onGoToError} />}
         {run && outcome && selected === 'messages' && <Messages run={run} outcome={outcome} />}
