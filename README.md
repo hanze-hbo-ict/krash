@@ -87,7 +87,14 @@ to other origins (an E2E test checks this).
 - **MIME types.** Serve `.wasm` as `application/wasm`.
 - **Size.** The first load is about 16 MB (9 MB WASM, 6 MB data, about 1 MB JS/CSS). `/assets/*` files are
   content-hashed and cached as immutable.
-- **Offline.** No service worker is included.
+- **Offline.** No service worker is included. (The diagnostics page below registers a test service worker for
+  `/diagnostics/` only, and unregisters it when it finishes.)
+- **Diagnostics.** `/diagnostics/` is a static diagnostics page for environments where Krash does not work, for example
+  an exam shell. Someone opens it there, presses **Run all variants** and sends back the JSON report. It measures the
+  browser, the headers as received, workers, `SharedArrayBuffer`, WebAssembly and service workers, under Krash's own
+  headers and with comparison headers set by the `/diagnostics/*` rules in `public/_headers`. It was copied from
+  [Klode](https://github.com/hanze-hbo-ict/klode) and now belongs to Krash; see `public/diagnostics/README.md`.
+  `vite preview` sends Krash's headers on every path, so the comparison pages only differ on Cloudflare Pages.
 
 ## Architecture
 

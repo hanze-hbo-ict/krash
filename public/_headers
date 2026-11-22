@@ -8,3 +8,14 @@
 
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
+
+# Comparison pages of the diagnostics page (public/diagnostics/README.md): only
+# the isolation headers differ from Krash's own.
+/diagnostics/isolated/*
+  Cross-Origin-Embedder-Policy: require-corp
+
+/diagnostics/credentialless/*
+  Cross-Origin-Embedder-Policy: credentialless
+
+/diagnostics/no-isolation/*
+  ! Cross-Origin-Opener-Policy
