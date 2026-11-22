@@ -1,0 +1,7 @@
+{
+  "app": "Krash",
+  "appURL": "../",
+  "headers": {
+    "Cross-Origin-Opener-Policy": "same-origin"
+  }
+}
